@@ -2,10 +2,10 @@
 
 ## Data Layer Split
 
-```txt
-append-only log      → manual lamport + watermark sync + IndexedDB
-concurrent mutations → Yjs CRDT per channel doc
-server state         → Yjs CRDT per server doc
+```
+message log (append-only)  → lamport + watermark sync + IndexedDB
+channel mutations (CRDT)   → Yjs per-channel doc (reactions, edits, deletes)
+identity                   → BIP39 + ed25519, encrypted at rest in IndexedDB
 ```
 
 ---
@@ -13,85 +13,44 @@ server state         → Yjs CRDT per server doc
 ## IndexedDB Schema (idb)
 
 ```typescript
-import { openDB, type IDBPDatabase } from "idb";
-
-const STORES = {
-  messages: "messages",
-  attachments: "attachments",
-  pending: "pending",
-  identity: "identity",
-  watermarks: "watermarks",
-  yjsDocs: "yjsDocs",
-} as const;
-
-export async function openAppDB(): Promise<IDBPDatabase> {
-  return openDB("app", 1, {
+export async function getDB(): Promise<AppDB> {
+  // singleton — one connection for app lifetime
+  return openDB("awful-chat", 1, {
     upgrade(db) {
-      // messages — indexed by roomCode+lamport for paginated queries
-      const msg = db.createObjectStore("messages", { keyPath: "id" });
-      msg.createIndex("byRoom", "roomCode");
-      msg.createIndex("byRoomLamport", ["roomCode", "lamport"]);
-      msg.createIndex("bySender", "senderId");
+      // messages
+      const msg = db.createObjectStore("messages", { keyPath: "id" })
+      msg.createIndex("byRoom",        "roomCode")
+      msg.createIndex("byRoomLamport", ["roomCode", "lamport"])
+      msg.createIndex("bySender",      "senderId")
 
-      // attachments — indexed for lookup by message and by infoHash
-      const att = db.createObjectStore("attachments", { keyPath: "id" });
-      att.createIndex("byMessage", "messageId");
-      att.createIndex("byInfoHash", "infoHash");
-      att.createIndex("byStatus", "status");
+      // attachments
+      const att = db.createObjectStore("attachments", { keyPath: "id" })
+      att.createIndex("byMessage",  "messageId")
+      att.createIndex("byInfoHash", "infoHash")
+      att.createIndex("byStatus",   "status")
 
       // pending DM messages
-      const pen = db.createObjectStore("pending", { keyPath: "id" });
-      pen.createIndex("byRecipient", "to");
+      const pen = db.createObjectStore("pending", { keyPath: "id" })
+      pen.createIndex("byRecipient", "to")
 
-      // identity — single record, keyed by 'mnemonic'
-      db.createObjectStore("identity", { keyPath: "id" });
+      // identity — keyed by "mnemonic" | "keypair"
+      db.createObjectStore("identity", { keyPath: "id" })
 
       // watermarks — keyed by "roomCode:senderId"
-      db.createObjectStore("watermarks", { keyPath: "id" });
+      const wm = db.createObjectStore("watermarks", { keyPath: "id" })
+      wm.createIndex("byRoom", "roomCode")
 
-      // Yjs doc snapshots — keyed by "server:serverId" or "channel:roomCode"
-      db.createObjectStore("yjsDocs", { keyPath: "id" });
-    },
-  });
-}
-```
+      // Yjs snapshots — keyed by "channel:{roomCode}"
+      db.createObjectStore("yjsDocs", { keyPath: "id" })
 
-### Common Queries
+      // rooms — keyed by roomCode
+      const room = db.createObjectStore("rooms", { keyPath: "roomCode" })
+      room.createIndex("byType", "type")
 
-```typescript
-// paginated messages for a room (50 per page, cursor-based)
-async function getMessages(
-  db: IDBPDatabase,
-  roomCode: string,
-  beforeLamport?: number,
-) {
-  const index = db.transaction("messages").store.index("byRoomLamport");
-  const range = beforeLamport
-    ? IDBKeyRange.bound([roomCode, 0], [roomCode, beforeLamport], false, true)
-    : IDBKeyRange.bound([roomCode, 0], [roomCode, Infinity]);
-  const results: Message[] = [];
-  let cursor = await index.openCursor(range, "prev");
-  while (cursor && results.length < 50) {
-    results.push(cursor.value);
-    cursor = await cursor.continue();
-  }
-  return results.reverse();
-}
-
-// watermark lookup
-function watermarkKey(roomCode: string, senderId: string) {
-  return `${roomCode}:${senderId}`;
-}
-
-// Yjs persistence
-async function saveYjsDoc(db: IDBPDatabase, id: string, doc: Y.Doc) {
-  const update = Y.encodeStateAsUpdate(doc);
-  await db.put("yjsDocs", { id, update });
-}
-
-async function loadYjsDoc(db: IDBPDatabase, id: string, doc: Y.Doc) {
-  const record = await db.get("yjsDocs", id);
-  if (record) Y.applyUpdate(doc, record.update);
+      // profiles — "own" + peer did:keys
+      db.createObjectStore("profiles", { keyPath: "id" })
+    }
+  })
 }
 ```
 
@@ -103,53 +62,53 @@ async function loadYjsDoc(db: IDBPDatabase, id: string, doc: Y.Doc) {
 
 ```typescript
 interface Message {
-  id: string; // UUIDv7
-  roomCode: string;
-  senderId: string;
-  senderName: string;
-  senderDid?: string;
-  sig?: string; // ed25519 over canonical(id, senderId, lamport, content)
-  timestamp: number; // wall clock, display only
-  lamport: number; // logical clock, ordering source of truth
-  type: MessageType;
-  content: string;
-  meta?: FileMeta;
-  attachments: string[]; // Attachment.id refs
-  replyTo?: ReplyTo;
-  status?: MessageStatus; // DMs only
+  id: string             // UUIDv7
+  roomCode: string
+  senderId: string
+  senderName: string
+  senderDid?: string
+  sig?: string           // ed25519 over canonical(id, senderId, lamport, content)
+  timestamp: number      // wall clock, display only
+  lamport: number        // ordering source of truth
+  type: MessageType
+  content: string
+  meta?: FileMeta
+  attachments: string[]  // Attachment.id refs
+  replyTo?: ReplyTo
+  status?: MessageStatus // DMs only
 }
 
 enum MessageType {
-  Text = "text",
-  File = "file",
-  System = "system",
-  Reply = "reply",
-  SyncRequest = "sync_request",
-  SyncOffer = "sync_offer",
-  SyncBatch = "sync_batch",
+  Text         = "text",
+  File         = "file",
+  System       = "system",
+  Reply        = "reply",
+  SyncRequest  = "sync_request",
+  SyncOffer    = "sync_offer",
+  SyncBatch    = "sync_batch",
   SyncComplete = "sync_complete",
-  SyncAck = "sync_ack",
-  DeliveryAck = "delivery_ack",
-  ReadAck = "read_ack",
+  SyncAck      = "sync_ack",
+  DeliveryAck  = "delivery_ack",
+  ReadAck      = "read_ack",
 }
 
-type MessageStatus = "sending" | "sent" | "delivered" | "read";
+type MessageStatus = "sending" | "sent" | "delivered" | "read"
 
 interface ReplyTo {
-  id: string;
-  senderName: string;
-  content: string; // snapshot at send time
+  id: string
+  senderName: string
+  content: string        // snapshot at send time
 }
 
 interface FileMeta {
-  files: FileEntry[];
+  files: FileEntry[]
 }
 
 interface FileEntry {
-  filename: string;
-  mimeType: string;
-  size: number;
-  infoHash: string;
+  filename: string
+  mimeType: string
+  size: number
+  infoHash: string
 }
 ```
 
@@ -157,102 +116,96 @@ interface FileEntry {
 
 ```typescript
 interface Attachment {
-  id: string; // UUIDv7
-  roomCode: string;
-  messageId: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-  infoHash: string; // permanent WebTorrent reference
-  data?: ArrayBuffer; // only if size < 5MB
-  blobURL?: string; // runtime only, never persisted
-  status: AttachmentStatus;
-  createdAt: number;
+  id: string             // UUIDv7
+  roomCode: string
+  messageId: string
+  filename: string
+  mimeType: string
+  size: number
+  infoHash: string       // permanent WebTorrent reference
+  data?: ArrayBuffer     // only if size < 5MB, raw binary
+  blobURL?: string       // runtime only, never persisted
+  status: AttachmentStatus
+  createdAt: number
 }
 
-type AttachmentStatus =
-  | "seeding"
-  | "pending"
-  | "downloading"
-  | "complete"
-  | "failed";
+type AttachmentStatus = "seeding" | "pending" | "downloading" | "complete" | "failed"
 ```
 
-### Wire Types
+### Room
 
 ```typescript
-interface WireMessage {
-  id: string;
-  senderId: string;
-  senderName: string;
-  senderDid?: string;
-  sig?: string;
-  timestamp: number;
-  lamport: number;
-  type: MessageType;
-  content: string;
-  meta?: FileMeta;
-  replyTo?: ReplyTo;
+type RoomType = "text" | "voice" | "dm"
+
+interface Room {
+  roomCode: string
+  type: RoomType
+  name: string
+  lastSeenLamport: number  // unread count derived from this
+  createdAt: number
+  pfpData?: ArrayBuffer    // local upload — blobURL generated at runtime
+  pfpURL?: string          // external URL (tenor, giphy, etc) — stored as-is
+  // pfpData and pfpURL mutually exclusive
 }
 
-interface WireDeliveryAck {
-  type: MessageType.DeliveryAck;
-  messageId: string;
-  senderId: string;
-}
-interface WireReadAck {
-  type: MessageType.ReadAck;
-  messageId: string;
-  senderId: string;
+interface DMRoom extends Room {
+  type: "dm"
+  participantDid: string
 }
 ```
 
-### Sync Protocol
+### Profiles
 
 ```typescript
-interface SyncRequest {
-  type: MessageType.SyncRequest;
-  roomCode: string;
-  watermarks: Record<string, number>; // senderId → maxLamport seen from them
+interface OwnProfile {
+  id: "own"
+  did: string
+  nickname: string
+  pfpData?: ArrayBuffer
+  pfpURL?: string          // stored as-is if external URL
+  updatedAt: number
 }
-interface SyncOffer {
-  type: MessageType.SyncOffer;
-  totalMessages: number;
-  totalBatches: number;
+
+interface PeerProfile {
+  did: string              // PK
+  nickname: string
+  pfpData?: ArrayBuffer
+  pfpURL?: string
+  updatedAt: number
 }
-interface SyncBatch {
-  type: MessageType.SyncBatch;
-  messages: Message[];
-  batchIndex: number;
-  totalBatches: number;
+
+// pfp rendering:
+//   pfpData present → URL.createObjectURL(new Blob([pfpData])) at runtime
+//   pfpURL present  → use directly as <img src>
+//   setting one clears the other
+```
+
+### Identity Types
+
+```typescript
+interface MnemonicRecord {
+  id: "mnemonic"
+  salt: Uint8Array
+  iv: Uint8Array
+  encrypted: ArrayBuffer   // AES-GCM encrypted mnemonic
 }
-interface SyncComplete {
-  type: MessageType.SyncComplete;
-}
-interface SyncAck {
-  type: MessageType.SyncAck;
+
+interface KeypairRecord {
+  id: "keypair"
+  did: string
+  publicKey: Uint8Array    // ed25519, cached
+  // privateKey NEVER stored — derived at unlock, held in memory only
 }
 ```
 
-### Watermark Record
+### Watermark
 
 ```typescript
 interface WatermarkRecord {
-  roomCode: string;
-  senderId: string;
-  maxLamport: number;
-}
-```
-
-### Identity
-
-```typescript
-interface IdentityRecord {
-  id: "mnemonic" | "keypair";
-  salt?: Uint8Array;
-  iv?: Uint8Array;
-  encrypted?: ArrayBuffer; // AES-GCM encrypted mnemonic
-  publicKey?: Uint8Array; // ed25519 public key (cached for perf)
+  id: string               // "roomCode:senderId"
+  roomCode: string
+  senderId: string
+  maxLamport: number
 }
 ```
 
@@ -260,80 +213,85 @@ interface IdentityRecord {
 
 ```typescript
 interface PendingMessage {
-  id: string;
-  to: string; // recipient did:key
-  message: WireMessage;
-  createdAt: number;
-  attempts: number;
+  id: string               // same id as WireMessage
+  to: string               // recipient did:key
+  message: WireMessage     // already encrypted
+  createdAt: number
+  attempts: number
 }
+```
+
+### Wire Types
+
+```typescript
+interface WireMessage {
+  id: string
+  senderId: string
+  senderName: string
+  senderDid?: string
+  sig?: string
+  timestamp: number
+  lamport: number
+  type: MessageType
+  content: string
+  meta?: FileMeta
+  replyTo?: ReplyTo
+}
+
+interface WireDeliveryAck { type: MessageType.DeliveryAck; messageId: string; senderId: string }
+interface WireReadAck     { type: MessageType.ReadAck;     messageId: string; senderId: string }
+```
+
+### Sync Protocol
+
+```typescript
+interface SyncRequest {
+  type: MessageType.SyncRequest
+  roomCode: string
+  watermarks: Record<string, number>  // senderId → maxLamport seen from them
+}
+interface SyncOffer    { type: MessageType.SyncOffer;    totalMessages: number; totalBatches: number }
+interface SyncBatch    { type: MessageType.SyncBatch;    messages: Message[]; batchIndex: number; totalBatches: number }
+interface SyncComplete { type: MessageType.SyncComplete }
+interface SyncAck      { type: MessageType.SyncAck }
 ```
 
 ---
 
-## Yjs Documents
-
-### Per Server (`serverDoc`)
+## Yjs Channel Doc
 
 ```typescript
-serverDoc.getMap("members"); // did:key → { name: string, avatar: string, joinedAt: number }
-serverDoc.getMap("roles"); // did:key → roleId: string
-serverDoc.getMap("rolesDef"); // roleId → { name: string, color: string, permissions: string[] }
-serverDoc.getMap("channels"); // channelId → { name: string, type: ChannelType, roomCode: string }
-serverDoc.getMap("presence"); // did:key → { online: boolean, typing: boolean, lastSeen: number }
-serverDoc.getMap("settings"); // 'name' | 'icon' | 'description' → string
-serverDoc.getMap("revocations"); // tokenCID → { revokedAt: number, revokedBy: string }
+// per channel — reactions, edits, deletes, pins, topic
+// keyed in IndexedDB as "channel:{roomCode}"
 
-enum ChannelType {
-  Text = "text",
-  Voice = "voice",
-  DM = "dm",
-}
-```
-
-### Per Channel (`channelDoc`)
-
-```typescript
-// reactions: messageId → emoji → Y.Array<senderId>
-channelDoc.getMap<Y.Map<Y.Array<string>>>("reactions");
-
-// edits: messageId → latest edit
-channelDoc.getMap<{ content: string; editedAt: number; editedBy: string }>(
-  "edits",
-);
-
-// deletes: messageId → tombstone
-channelDoc.getMap<{ deletedAt: number; deletedBy: string }>("deletes");
-
-// pins: ordered list of pinned messageIds
-channelDoc.getArray<string>("pins");
-
-// topic: collaborative text
-channelDoc.getText("topic");
+channelDoc.getMap<Y.Map<Y.Array<string>>>('reactions') // messageId → emoji → senderIds
+channelDoc.getMap<{ content: string; editedAt: number }>('edits')      // messageId → edit
+channelDoc.getMap<{ deletedAt: number; deletedBy: string }>('deletes') // messageId → tombstone
+channelDoc.getArray<string>('pins')
+channelDoc.getText('topic')
 ```
 
 ### Resolved Message (UI)
 
 ```typescript
 interface ResolvedMessage extends Message {
-  content: string; // original | edited content | "" if deleted
-  edited: boolean;
-  deleted: boolean;
-  reactions: Record<string, string[]>; // { emoji → senderId[] }
+  content: string
+  edited: boolean
+  deleted: boolean
+  reactions: Record<string, string[]>  // emoji → senderId[]
 }
 
 function resolveMessage(msg: Message, channelDoc: Y.Doc): ResolvedMessage {
-  const edits = channelDoc.getMap("edits");
-  const deletes = channelDoc.getMap("deletes");
-  const rxns = channelDoc.getMap("reactions");
-  const edit = edits.get(msg.id) as { content: string } | undefined;
-  const del = deletes.get(msg.id) as { deletedAt: number } | undefined;
+  const edit = channelDoc.getMap('edits').get(msg.id)   as { content: string } | undefined
+  const del  = channelDoc.getMap('deletes').get(msg.id) as { deletedAt: number } | undefined
+  const rxns = channelDoc.getMap('reactions').get(msg.id)
   return {
     ...msg,
-    content: del ? "" : (edit?.content ?? msg.content),
-    edited: !!edit && !del,
-    deleted: !!del,
-    reactions: yReactionsToRecord(rxns.get(msg.id)),
-  };
+    content:   del ? "" : (edit?.content ?? msg.content),
+    edited:    !!edit && !del,
+    deleted:   !!del,
+    reactions: rxns ? yReactionsToRecord(rxns) : {},
+  }
 }
 ```
 
@@ -342,12 +300,12 @@ function resolveMessage(msg: Message, channelDoc: Y.Doc): ResolvedMessage {
 ## Lamport Clock
 
 ```typescript
-// on send:    clock++
-// on receive: clock = max(clock, received) + 1
+// send:    clock++
+// receive: clock = max(local, received) + 1
 
 function sortMessages(a: Message, b: Message): number {
-  if (a.lamport !== b.lamport) return a.lamport - b.lamport;
-  return a.senderId.localeCompare(b.senderId); // deterministic tiebreaker
+  if (a.lamport !== b.lamport) return a.lamport - b.lamport
+  return a.senderId.localeCompare(b.senderId)  // deterministic tiebreaker
 }
 ```
 
@@ -356,19 +314,56 @@ function sortMessages(a: Message, b: Message): number {
 ## Sync Flow
 
 ```txt
-peer joins room
+peer joins room:
   → selectSyncHost([...connectedPeers, myId].sort()[0])
   → if not host: send SyncRequest { watermarks }
-  → if host: wait for SyncRequests, respond with SyncOffer + SyncBatch[]
+  → if host: respond with SyncOffer + SyncBatch[]
 
 host failure (no SyncComplete within 10s):
-  → recalculate host from remaining peers
-  → restart with new host
-  → deduplicate by message.id
+  → recalculate from remaining peers → restart → deduplicate by id
 
-Yjs channel doc syncs independently
-  → no coordination with message sync needed
-  → reactions/edits/deletes always eventually consistent
+Yjs:
+  → piggybacks on SimplePeer data channel (kind: "yjs-sync" / "yjs-update")
+  → load from IndexedDB before connecting peers
+  → save to IndexedDB on every update
+```
+
+---
+
+## Identity
+
+### Key Derivation
+
+```txt
+password → PBKDF2(salt, 100_000, SHA-256) → AES-256-GCM key → decrypt mnemonic
+mnemonic (BIP39, 12 words) → SLIP-0010 → ed25519 keypair
+did:key = "did:key:" + base58btc(0xed01 + publicKey)
+```
+
+### Unlock Flow
+
+```txt
+app open → prompt password → PBKDF2 → AES-GCM decrypt → derive keypair → hold in memory
+lock     → zero out private key bytes → null session
+```
+
+### Message Signature
+
+```typescript
+const canonical = `${msg.id}:${msg.senderId}:${msg.lamport}:${msg.content}`
+// sign with private key in memory
+// verify with pubkey decoded from senderDid (did:key)
+```
+
+---
+
+## DM Encryption
+
+```typescript
+// ed25519 → curve25519 conversion for ECDH
+const sharedSecret = x25519(edwardsToMontgomeryPriv(myPrivKey), edwardsToMontgomeryPub(theirPubKey))
+// then AES-GCM with sharedSecret as key
+// { iv, ct } transmitted in WireMessage.content
 ```
 
 ---
@@ -380,72 +375,20 @@ send:
   1. wtClient.seed(file, { announce: [] }) → infoHash
   2. store Attachment { infoHash, status: "seeding" }
   3. if size < 5MB: store data: ArrayBuffer
-  4. broadcast WireMessage with FileMeta { infoHash, filename, size, mimeType }
+  4. broadcast WireMessage with FileMeta
 
 receive:
-  1. store Attachment { infoHash, status: "pending" }
-  2. wtClient.add(infoHash, { announce: [] }) → status: "downloading"
-  3. torrent.on("done") → blob → blobURL → status: "complete"
-  4. if size < 5MB: store data: ArrayBuffer in Attachment
+  1. store Attachment { status: "pending" }
+  2. wtClient.add(infoHash) → status: "downloading"
+  3. torrent.on("done") → blobURL → status: "complete"
+  4. if size < 5MB: store ArrayBuffer
 
 startup:
-  re-seed all attachments where status = "complete" and data exists
+  re-seed all complete attachments that have data
 
-blobURL lifecycle:
-  created:  torrent done
-  revoked:  message scrolls out of virtual list OR beforeunload
-```
-
----
-
-## Identity Key
-
-### Key Derivation
-
-```txt
-password
-  → PBKDF2(password, salt, 100000, SHA-256) → AES-256-GCM key
-  → decrypt mnemonic from IndexedDB
-
-mnemonic (BIP39, 12 words)
-  → PBKDF2 seed (SLIP-0010)
-  → ed25519 root keypair
-  → did:key = "did:key:" + base58btc(0xed01 + publicKey)
-```
-
-### Message Signature
-
-```typescript
-// canonical string — excludes timestamp (untrusted wall clock)
-const canonical = [msg.id, msg.senderId, msg.lamport, msg.content].join(":");
-const sig = hex(await ed25519.sign(utf8(canonical), privateKey));
-
-// verify
-const pubkey = pubkeyFromDid(msg.senderDid); // decode did:key
-const valid = await ed25519.verify(unhex(msg.sig), utf8(canonical), pubkey);
-```
-
-### UCAN
-
-```typescript
-// non-expiring — no exp field
-// revocation via Yjs revocations map
-
-capabilities:
-  message/send    message/delete  message/edit    message/pin
-  member/kick     member/ban      member/invite
-  channel/create  channel/delete  channel/edit
-  roles/assign    server/edit
-  voice/speak     voice/deafen    voice/kick
-```
-
----
-
-## Room Codes
-
-```txt
-text/voice channel:  slug + "-" + 4 char hex   e.g. "general-4f2a"
-DM:                  sha256(sort([didA, didB]).join(':'))[0..12]  hex
+blobURL:
+  created: torrent done
+  revoked: message scrolls out of virtual list OR beforeunload
 ```
 
 ---
@@ -453,9 +396,12 @@ DM:                  sha256(sort([didA, didB]).join(':'))[0..12]  hex
 ## DataChannel Limits
 
 ```txt
-max message size:    64 KB
-SyncBatch:           max 20 messages per batch
-WireMessage:         reactions/edits/deletes NOT included — Yjs only
+max per message:   64 KB
+SyncBatch:         max 20 messages per batch
+Yjs updates:       { kind: "yjs-update", doc, data: number[] }
+                   incremental ops typically < 1KB
+                   initial yjs-sync on connect can be larger — stays under 64KB
+                   for channel docs (reactions, edits, pins)
 ```
 
 ---
@@ -463,29 +409,58 @@ WireMessage:         reactions/edits/deletes NOT included — Yjs only
 ## Voice/Video
 
 ```txt
-1-on-1:   SimplePeer direct, no SFU
-group:    mediasoup SFU, ≤15 participants
-signaling: mediasoup-client with SimplePeerHandler (custom handler)
-          reuses existing data channel, no extra WebSocket
-UI:       Participant { id, stream: MediaStream, audioEnabled, videoEnabled }
-          same interface regardless of SimplePeer or mediasoup source
+1-on-1:  SimplePeer direct
+group:   mediasoup SFU, ≤15 participants
+signals: flow through existing data channel via SimplePeerHandler
+UI:      Participant { id, stream: MediaStream, audioEnabled, videoEnabled }
 ```
 
 ---
 
-## Server Privacy Model
+## Room Codes
 
 ```txt
-server knows:
-  ephemeral session ID per connection (rotates on every reconnect)
-  which room a session is in
+text/voice:  slugify(name) + "-" + sha256(creatorDid + salt)[0..4]
+DM:          sha256(sort([didA, didB]).join(':'))[0..24]
+```
 
-server never knows:
-  did:key or real identity
-  UCAN tokens or capabilities
-  message content (full mesh rooms)
-  Yjs document content
+---
 
-UCAN verification: peer-to-peer over SimplePeer data channel
-Yjs sync:          peer-to-peer via SimplePeer
+## Server Privacy
+
+```txt
+signaling server knows:  ephemeral session ID + roomCode only
+never knows:             did:key, message content, Yjs content
+all p2p:                 messages, files, Yjs — direct between peers
+```
+
+---
+
+## Future: Roles + Permissions (Hash Chain Model) (maybe)
+
+*Deferred — implement after core is stable*
+
+When roles are needed, the model is:
+
+```txt
+room creation:
+  roomCode embeds commitment to creatorDid
+  genesis entry signed by creator → stored in Yjs
+  genesis is the trust anchor — verifiable from roomCode alone
+
+role changes:
+  each mutation is a SignedMutation { update, signer, sig, lamport }
+  signer's role at mutation time determines if it is accepted
+  replayed in lamport order — post-revocation mutations rejected
+
+hash chain:
+  each entry references prevHash = sha256(previous entry)
+  omitting an entry breaks the chain → detectable
+  peer serving truncated chain exposed when longer valid chain exists
+  owner coming online with full chain → rollback of invalid optimistic state
+
+known limitation:
+  if only malicious peers are reachable, role state may be stale
+  mitigated by syncing from multiple peers + longest valid chain wins
+  signaling server can optionally store and serve the chain
 ```
