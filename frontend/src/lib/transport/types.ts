@@ -108,7 +108,7 @@ export interface VideoEvents {
 
 /**
  * SFU video — routes video through mediasoup server.
- * Works with any PeerTransport for signaling.
+ * Connects directly to the SFU via its own WebSocket (VITE_SFU_URL).
  * Implemented by MediasoupVideo.
  *
  * Audio stays p2p via VoiceTransport.

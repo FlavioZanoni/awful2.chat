@@ -1,13 +1,7 @@
 import * as mediasoupClient from "mediasoup-client";
-import type {
-  VideoTransport,
-  VideoEvents,
-  VideoSource,
-  PeerTransport,
-} from "./types";
+import type { VideoTransport, VideoEvents, VideoSource } from "./types";
 
-// flow over existing PeerTransport data channel
-// wrapped as { kind: "mediasoup", data: MSMessage }
+// ── Message types (mirrored on the SFU server) ────────────────────────────────
 
 interface MSGetCapabilities {
   type: "ms:get-capabilities";
@@ -91,10 +85,9 @@ interface Consumer {
  * Handles camera and screen share via server-side fan-out.
  * Audio is NOT handled here — stays p2p via SimplePeerVoice.
  *
- * Signaling flows over the existing PeerTransport data channel:
- *   { kind: "mediasoup", data: MSMessage }
- *
- * Compatible with any PeerTransport — SimplePeer or libp2p.
+ * Signaling flows over a dedicated WebSocket connection to the SFU server.
+ * The SFU URL is resolved from VITE_SFU_URL env var, defaulting to /sfu on
+ * the same host as the page (routed by the reverse proxy in production).
  */
 export class MediasoupVideo implements VideoTransport {
   private device: mediasoupClient.types.Device | null = null;
@@ -115,38 +108,21 @@ export class MediasoupVideo implements VideoTransport {
   private audioCtx: AudioContext | null = null;
   private trackGains: Map<string, GainNode> = new Map(); // track.id → GainNode
 
-  constructor(private transport: PeerTransport) {
-    this.transport.on("message", (_peerId, data) => {
-      try {
-        const envelope = JSON.parse(new TextDecoder().decode(data));
-        if (envelope.kind === "mediasoup") {
-          this.handleSignal(envelope.data as MSMessage);
-        }
-      } catch {
-        // not a mediasoup message — ignore
-      }
-    });
+  // SFU WebSocket — opened on join(), closed on leave()
+  private sfuWs: WebSocket | null = null;
 
-    this.transport.on("disconnect", (peerId) => {
-      if (this.active.has(peerId)) {
-        this.active.delete(peerId);
-        this.consumers.get(peerId)?.forEach((c) => c.consumer.close());
-        this.consumers.delete(peerId);
-        this.emit("peerLeft", peerId);
-      }
-    });
-  }
-
-  async join(_roomCode: string): Promise<void> {
+  async join(roomCode: string): Promise<void> {
     try {
-      const rtpCapabilities =
-        await this.request<mediasoupClient.types.RtpCapabilities>(
+      await this.connectSfu(roomCode);
+
+      const capMsg =
+        await this.request<MSCapabilities>(
           { type: "ms:get-capabilities" },
           "ms:capabilities"
         );
 
       this.device = new mediasoupClient.Device();
-      await this.device.load({ routerRtpCapabilities: rtpCapabilities });
+      await this.device.load({ routerRtpCapabilities: capMsg.rtpCapabilities });
 
       await this.createSendTransport();
       await this.createRecvTransport();
@@ -169,6 +145,9 @@ export class MediasoupVideo implements VideoTransport {
     this.trackGains.clear();
     this.audioCtx?.close();
 
+    this.sfuWs?.close();
+    this.sfuWs = null;
+
     this.producers.clear();
     this.consumers.clear();
     this.active.clear();
@@ -178,6 +157,7 @@ export class MediasoupVideo implements VideoTransport {
     this.sendTransport = null;
     this.recvTransport = null;
     this.audioCtx = null;
+    this.pending.clear();
   }
 
   async startCamera(): Promise<void> {
@@ -281,6 +261,64 @@ export class MediasoupVideo implements VideoTransport {
     }
   }
 
+  // ── Private helpers ─────────────────────────────────────────────────────────
+
+  /**
+   * Open a WebSocket to the SFU and send the join message.
+   * Resolves once the connection is open and the join is sent.
+   */
+  private connectSfu(roomCode: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const sfuUrl =
+        (import.meta as any).env?.VITE_SFU_URL ??
+        `${location.origin.replace(/^http/, "ws")}/sfu`;
+
+      const ws = new WebSocket(sfuUrl);
+      this.sfuWs = ws;
+
+      ws.onopen = () => {
+        // Identify ourselves to the SFU with a stable anonymous peer id.
+        // We reuse a per-page session id so the SFU can correlate transports.
+        ws.send(
+          JSON.stringify({
+            type: "join",
+            roomCode,
+            peerId: this.selfId(),
+          })
+        );
+        resolve();
+      };
+
+      ws.onerror = (e) => {
+        reject(new Error("SFU WebSocket error"));
+      };
+
+      ws.onmessage = (e: MessageEvent<string>) => {
+        try {
+          const msg = JSON.parse(e.data) as MSMessage;
+          this.handleSignal(msg);
+        } catch {
+          // ignore non-JSON
+        }
+      };
+
+      ws.onclose = () => {
+        // Reject all pending requests when connection drops
+        for (const [type, { reject: rej }] of this.pending) {
+          rej(new Error(`SFU connection closed waiting for ${type}`));
+        }
+        this.pending.clear();
+      };
+    });
+  }
+
+  /** Stable per-page session id used as our SFU peer id. */
+  private _selfId: string | null = null;
+  private selfId(): string {
+    if (!this._selfId) this._selfId = crypto.randomUUID();
+    return this._selfId;
+  }
+
   private async publish(
     stream: MediaStream,
     source: VideoSource
@@ -315,12 +353,12 @@ export class MediasoupVideo implements VideoTransport {
   }
 
   private async createSendTransport(): Promise<void> {
-    const options = await this.request<mediasoupClient.types.TransportOptions>(
+    const msg = await this.request<MSTransportOptions>(
       { type: "ms:create-transport", direction: "send" },
       "ms:transport-options"
     );
 
-    this.sendTransport = this.device!.createSendTransport(options);
+    this.sendTransport = this.device!.createSendTransport(msg.options as mediasoupClient.types.TransportOptions);
 
     this.sendTransport.on(
       "connect",
@@ -352,12 +390,12 @@ export class MediasoupVideo implements VideoTransport {
   }
 
   private async createRecvTransport(): Promise<void> {
-    const options = await this.request<mediasoupClient.types.TransportOptions>(
+    const msg = await this.request<MSTransportOptions>(
       { type: "ms:create-transport", direction: "recv" },
       "ms:transport-options"
     );
 
-    this.recvTransport = this.device!.createRecvTransport(options);
+    this.recvTransport = this.device!.createRecvTransport(msg.options as mediasoupClient.types.TransportOptions);
 
     this.recvTransport.on(
       "connect",
@@ -373,11 +411,9 @@ export class MediasoupVideo implements VideoTransport {
   }
 
   private signal(msg: MSMessage): void {
-    const data = new TextEncoder().encode(
-      JSON.stringify({ kind: "mediasoup", data: msg })
-    );
-    const [serverId] = this.transport.peers();
-    if (serverId) this.transport.send(serverId, data);
+    if (this.sfuWs?.readyState === WebSocket.OPEN) {
+      this.sfuWs.send(JSON.stringify(msg));
+    }
   }
 
   private handleSignal(msg: MSMessage): void {

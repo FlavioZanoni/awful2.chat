@@ -40,10 +40,10 @@
         >
       </div>
       <CardTitle class="text-lg font-mono font-semibold">
-        welcome back
+        Welcome back
       </CardTitle>
       <CardDescription class="text-muted-foreground text-xs font-mono">
-        enter your password to unlock your identity
+        Enter your password to unlock your identity
         {#if identityStore.keypair?.did}
           <span class="block mt-1 text-muted-foreground/60 truncate">
             {identityStore.keypair.did.slice(0, 24)}…

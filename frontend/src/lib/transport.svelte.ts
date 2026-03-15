@@ -77,7 +77,7 @@ function lamportReceive(remote: number): void {
 
 const _transport = new SimplePeerTransport();
 const _voice = new SimplePeerVoice(_transport);
-const _video = new MediasoupVideo(_transport);
+const _video = new MediasoupVideo();
 
 // ── Sync state ───────────────────────────────────────────────────────────────
 

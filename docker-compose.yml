@@ -11,6 +11,30 @@ services:
     networks:
       - dokploy-network
 
+  sfu:
+    build:
+      context: ./sfu
+    restart: unless-stopped
+    # mediasoup WebSocket signaling port (internal only — reached via nginx proxy)
+    expose:
+      - "3000"
+    # mediasoup RTC UDP/TCP ports — browsers connect to these directly (bypasses Traefik).
+    # 500 ports supports ~250 concurrent peers (1 send + 1 recv transport each).
+    # These ports must be open in the host firewall.
+    ports:
+      - "40000-40499:40000-40499/udp"
+      - "40000-40499:40000-40499/tcp"
+    environment:
+      NODE_ENV: production
+      SFU_PORT: "3000"
+      # REQUIRED: set to the host's public IP so browsers can reach the RTC ports above.
+      # In dokploy, add ANNOUNCED_IP as an environment variable in the service settings.
+      ANNOUNCED_IP: ${ANNOUNCED_IP:?ANNOUNCED_IP must be set to the server public IP}
+      RTC_MIN_PORT: "40000"
+      RTC_MAX_PORT: "40499"
+    networks:
+      - dokploy-network
+
   frontend:
     build:
       context: ./frontend
@@ -19,6 +43,7 @@ services:
       - "80"
     depends_on:
       - signal
+      - sfu
     networks:
       - dokploy-network
     labels:
