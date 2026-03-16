@@ -44,6 +44,8 @@ interface TransportState {
   peerNames: Map<string, string>;
   peerAvatars: Map<string, string>;
   error: string | null;
+  /** Peers currently known to be in voice call (from call presence signaling). */
+  callPeerIds: Set<string>;
   /** Peers known to be in the SFU room (have at least one producer). Used for the "join call" banner. */
   sfuPeerIds: Set<string>;
   /** Pending screen-share transmissions: peerId → producerId. Not yet being watched. */
@@ -70,6 +72,7 @@ export const transportState = $state<TransportState>({
   peerNames: new Map(),
   peerAvatars: new Map(),
   error: null,
+  callPeerIds: new Set(),
   sfuPeerIds: new Set(),
   pendingTransmissions: new Map(),
   watchingTransmissionPeerId: null,
@@ -108,6 +111,15 @@ function encode(obj: unknown): Uint8Array {
 
 function decode(data: Uint8Array): unknown {
   return JSON.parse(new TextDecoder().decode(data));
+}
+
+function _sendCallPresence(peerId?: string): void {
+  const payload = encode({ kind: "call-presence", inCall: transportState.inCall });
+  if (peerId) {
+    _transport.send(peerId, payload);
+    return;
+  }
+  _transport.broadcast(payload);
 }
 
 function selectSyncHost(peers: string[], myId: string): string {
@@ -275,6 +287,9 @@ function _handleSyncComplete(peerId: string): void {
 _transport.on("connect", (peerId) => {
   transportState.peers = _transport.peers();
   _broadcastProfile();
+  if (transportState.inCall) {
+    _sendCallPresence(peerId);
+  }
 
   const myId = _transport.selfId();
   const host = selectSyncHost(_transport.peers(), myId);
@@ -288,6 +303,9 @@ _transport.on("disconnect", (peerId) => {
   const parts = new Map(transportState.participants);
   parts.delete(peerId);
   transportState.participants = parts;
+  const calls = new Set(transportState.callPeerIds);
+  calls.delete(peerId);
+  transportState.callPeerIds = calls;
   const did = _peerIdToDid.get(peerId);
   if (did) {
     const names = new Map(transportState.peerNames);
@@ -342,6 +360,15 @@ _transport.on("message", (peerId, data) => {
           }).catch(() => {});
         })
         .catch(() => {});
+      return;
+    }
+
+    if (envelope.kind === "call-presence") {
+      const inCall = envelope.inCall === true;
+      const next = new Set(transportState.callPeerIds);
+      if (inCall) next.add(peerId);
+      else next.delete(peerId);
+      transportState.callPeerIds = next;
       return;
     }
 
@@ -485,14 +512,22 @@ _video.on("peerJoined", (peerId) => {
 
 _video.on("peerLeft", (peerId) => {
   const p = transportState.participants.get(peerId);
-  if (!p) return;
-  transportState.participants = new Map(transportState.participants).set(
-    peerId,
-    { ...p, videoTrack: null, screenTrack: null }
-  );
+  if (p) {
+    transportState.participants = new Map(transportState.participants).set(
+      peerId,
+      { ...p, videoTrack: null, screenTrack: null }
+    );
+  }
   const next = new Set(transportState.sfuPeerIds);
   next.delete(peerId);
   transportState.sfuPeerIds = next;
+  const tx = new Map(transportState.pendingTransmissions);
+  tx.delete(peerId);
+  transportState.pendingTransmissions = tx;
+  if (transportState.watchingTransmissionPeerId === peerId) {
+    transportState.watchingTransmissionPeerId = null;
+    transportState.watchingTransmissionProducerId = null;
+  }
 });
 
 _video.on("transmissionAvailable", (peerId, producerId) => {
@@ -553,6 +588,7 @@ export function leaveRoom(): void {
   transportState.peerNames = new Map();
   transportState.peerAvatars = new Map();
   transportState.error = null;
+  transportState.callPeerIds = new Set();
   transportState.sfuPeerIds = new Set();
   transportState.pendingTransmissions = new Map();
   transportState.watchingTransmissionPeerId = null;
@@ -650,6 +686,7 @@ export async function joinCall(): Promise<void> {
   try {
     await _voice.join(transportState.roomCode ?? "");
     transportState.inCall = true;
+    _sendCallPresence();
     transportState.muted = _voice.isMuted();
     transportState.localMicStream = _voice.getMicStream();
     await _video.join(transportState.roomCode ?? "");
@@ -660,6 +697,10 @@ export async function joinCall(): Promise<void> {
 }
 
 export function leaveCall(): void {
+  if (transportState.inCall) {
+    transportState.inCall = false;
+    _sendCallPresence();
+  }
   stopCamera();
   stopScreenShare();
   _voice.leave();

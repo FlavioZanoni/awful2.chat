@@ -131,6 +131,7 @@
   const hasSidebar = $derived(roomsStore.rooms.length > 0);
   const callPeerIds = $derived(
     new Set([
+      ...transportState.callPeerIds,
       ...[...transportState.participants.entries()]
         .filter(([, p]) => p.audioTrack || p.videoTrack || p.screenTrack)
         .map(([id]) => id),

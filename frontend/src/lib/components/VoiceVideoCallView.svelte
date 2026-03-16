@@ -216,6 +216,7 @@
 
   const tiles = $derived.by<TileData[]>(() => {
     const result: TileData[] = [];
+    const byPeer = new Map(participants);
     result.push({
       id: "local-camera",
       label: profileStore.nickname || "You",
@@ -226,20 +227,25 @@
       peerId: selfId,
       muted,
     });
-    for (const p of participants.values()) {
-      if (!p.videoTrack && !p.audioTrack) continue;
-      const did = peerIdToDidFn(p.peerId);
-      const label = peerNames.get(did) ?? p.peerId.slice(0, 8);
+    for (const peerId of callPeerIds) {
+      const p = byPeer.get(peerId) ?? {
+        peerId,
+        audioTrack: null,
+        videoTrack: null,
+        screenTrack: null,
+      };
+      const did = peerIdToDidFn(peerId);
+      const label = peerNames.get(did) ?? peerId.slice(0, 8);
       const avatarUrl = peerAvatars.get(did) ?? null;
       result.push({
-        id: `remote-camera-${p.peerId}`,
+        id: `remote-camera-${peerId}`,
         label,
         avatarUrl,
         isLocal: false,
         kind: "camera",
         videoTrack: p.videoTrack,
         audioTrack: p.audioTrack,
-        peerId: p.peerId,
+        peerId,
       });
     }
     if (localScreenTrack) {
@@ -253,7 +259,7 @@
         peerId: selfId,
       });
     }
-    for (const p of participants.values()) {
+    for (const p of byPeer.values()) {
       if (p.screenTrack) {
         const did = peerIdToDidFn(p.peerId);
         const label = peerNames.get(did) ?? p.peerId.slice(0, 8);
