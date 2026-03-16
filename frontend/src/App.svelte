@@ -18,6 +18,8 @@
     toggleCamera,
     startScreenShare,
     stopScreenShare,
+    watchTransmission,
+    stopWatchingTransmission,
   } from "$lib/transport.svelte";
   import {
     roomsStore,
@@ -128,11 +130,12 @@
   const myId = $derived(selfId());
   const hasSidebar = $derived(roomsStore.rooms.length > 0);
   const callPeerIds = $derived(
-    new Set(
-      [...transportState.participants.entries()]
+    new Set([
+      ...[...transportState.participants.entries()]
         .filter(([, p]) => p.audioTrack || p.videoTrack || p.screenTrack)
-        .map(([id]) => id)
-    )
+        .map(([id]) => id),
+      ...transportState.sfuPeerIds,
+    ])
   );
 </script>
 
@@ -189,6 +192,10 @@
             onToggleCamera={toggleCamera}
             onStartScreenShare={startScreenShare}
             onStopScreenShare={stopScreenShare}
+            pendingTransmissions={transportState.pendingTransmissions}
+            watchingTransmissionPeerId={transportState.watchingTransmissionPeerId}
+            onWatchTransmission={watchTransmission}
+            onStopWatchingTransmission={stopWatchingTransmission}
           />
         {:else}
           <RoomCreateJoin

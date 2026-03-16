@@ -40,6 +40,8 @@
     callPeerIds?: Set<string>;
     peerNames?: Map<string, string>;
     peerAvatars?: Map<string, string>;
+    pendingTransmissions?: Map<string, string>;
+    watchingTransmissionPeerId?: string | null;
     error?: string | null;
     onLeave: () => void;
     onOpenSidebar?: () => void;
@@ -50,6 +52,8 @@
     onToggleCamera: () => void;
     onStartScreenShare: () => void;
     onStopScreenShare: () => void;
+    onWatchTransmission?: (peerId: string, producerId: string) => void;
+    onStopWatchingTransmission?: () => void;
   }
 
   let {
@@ -69,6 +73,8 @@
     callPeerIds = new Set(),
     peerNames = new Map(),
     peerAvatars = new Map(),
+    pendingTransmissions = new Map(),
+    watchingTransmissionPeerId = null,
     error = null,
     onLeave,
     onOpenSidebar,
@@ -79,6 +85,8 @@
     onToggleCamera,
     onStartScreenShare,
     onStopScreenShare,
+    onWatchTransmission,
+    onStopWatchingTransmission,
   }: Props = $props();
 
   let draft = $state("");
@@ -277,6 +285,8 @@
     {peerNames}
     {peerAvatars}
     peerIdToDidFn={peerIdToDid}
+    {pendingTransmissions}
+    {watchingTransmissionPeerId}
     {error}
     {onJoinCall}
     {onLeaveCall}
@@ -284,6 +294,8 @@
     {onToggleCamera}
     {onStartScreenShare}
     {onStopScreenShare}
+    {onWatchTransmission}
+    {onStopWatchingTransmission}
   />
 
   <div

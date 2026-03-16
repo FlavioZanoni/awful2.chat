@@ -100,6 +100,8 @@ export class MediasoupVideo implements VideoTransport {
   private handlers: Map<keyof VideoEvents, Set<Function>> = new Map();
   private pending: Map<string, { resolve: Function; reject: Function }> =
     new Map();
+  // Screen-share producers that are available but not yet consumed (opt-in transmissions)
+  private pendingTransmissions: Map<string, string> = new Map(); // peerId → producerId
 
   // mute/volume state
   private muted: boolean = false;
@@ -152,6 +154,7 @@ export class MediasoupVideo implements VideoTransport {
     this.consumers.clear();
     this.active.clear();
     this.paused.clear();
+    this.pendingTransmissions.clear();
     this.muted = false;
     this.device = null;
     this.sendTransport = null;
@@ -211,6 +214,36 @@ export class MediasoupVideo implements VideoTransport {
 
   isPublishing(source: VideoSource): boolean {
     return this.producers.has(source);
+  }
+
+  /** Start watching a pending screen-share transmission from a remote peer. */
+  async watchTransmission(peerId: string, producerId: string): Promise<void> {
+    // Remove from pending so the tile changes from "click to watch" to live video
+    this.pendingTransmissions.delete(peerId);
+    await this.consumeProducer(peerId, producerId, "screen");
+  }
+
+  /** Stop watching a transmission — close all screen consumers for that peer. */
+  stopWatchingTransmission(peerId: string): void {
+    const peerConsumers = this.consumers.get(peerId);
+    if (!peerConsumers) return;
+    const screenConsumers = peerConsumers.filter((c) => c.source === "screen");
+    for (const c of screenConsumers) {
+      c.consumer.close();
+    }
+    // Remove screen consumers from the map entry
+    const remaining = peerConsumers.filter((c) => c.source !== "screen");
+    if (remaining.length > 0) {
+      this.consumers.set(peerId, remaining);
+    } else {
+      this.consumers.delete(peerId);
+    }
+    this.emit("trackRemoved", peerId, "screen");
+  }
+
+  /** Returns a copy of pending transmissions: peerId → producerId. */
+  getPendingTransmissions(): Map<string, string> {
+    return new Map(this.pendingTransmissions);
   }
 
   on<K extends keyof VideoEvents>(event: K, handler: VideoEvents[K]): void {
@@ -427,7 +460,14 @@ export class MediasoupVideo implements VideoTransport {
 
     switch (msg.type) {
       case "ms:new-producer":
-        this.consumeProducer(msg.peerId, msg.producerId, msg.source);
+        // Camera is auto-consumed as before.
+        // Screen share is opt-in — emit transmissionAvailable so the UI can show a tile.
+        if (msg.source === "screen") {
+          this.pendingTransmissions.set(msg.peerId, msg.producerId);
+          this.emit("transmissionAvailable", msg.peerId, msg.producerId);
+        } else {
+          this.consumeProducer(msg.peerId, msg.producerId, msg.source);
+        }
         break;
       case "ms:peer-left":
         if (this.active.has(msg.peerId)) {
@@ -435,6 +475,11 @@ export class MediasoupVideo implements VideoTransport {
           this.consumers.get(msg.peerId)?.forEach((c) => c.consumer.close());
           this.consumers.delete(msg.peerId);
           this.emit("peerLeft", msg.peerId);
+        }
+        // Clean up any pending transmission for this peer
+        if (this.pendingTransmissions.has(msg.peerId)) {
+          this.pendingTransmissions.delete(msg.peerId);
+          this.emit("transmissionEnded", msg.peerId);
         }
         break;
     }
@@ -490,6 +535,10 @@ export class MediasoupVideo implements VideoTransport {
       this.trackGains.get(consumer.track.id)?.disconnect();
       this.trackGains.delete(consumer.track.id);
       this.emit("trackRemoved", peerId, source);
+      // If the transmitter stopped sharing their screen, notify the UI
+      if (source === "screen") {
+        this.emit("transmissionEnded", peerId);
+      }
     });
   }
 

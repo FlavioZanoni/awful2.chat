@@ -44,6 +44,12 @@ interface TransportState {
   peerNames: Map<string, string>;
   peerAvatars: Map<string, string>;
   error: string | null;
+  /** Peers known to be in the SFU room (have at least one producer). Used for the "join call" banner. */
+  sfuPeerIds: Set<string>;
+  /** Pending screen-share transmissions: peerId → producerId. Not yet being watched. */
+  pendingTransmissions: Map<string, string>;
+  /** The peerId of the transmission currently being watched, or null. */
+  watchingTransmissionPeerId: string | null;
 }
 
 export const transportState = $state<TransportState>({
@@ -62,6 +68,9 @@ export const transportState = $state<TransportState>({
   peerNames: new Map(),
   peerAvatars: new Map(),
   error: null,
+  sfuPeerIds: new Set(),
+  pendingTransmissions: new Map(),
+  watchingTransmissionPeerId: null,
 });
 
 let _lamport = 0;
@@ -286,6 +295,16 @@ _transport.on("disconnect", (peerId) => {
     transportState.peerAvatars = avatars;
     _peerIdToDid.delete(peerId);
   }
+  // Clean up SFU tracking and any pending transmission
+  const sfuNext = new Set(transportState.sfuPeerIds);
+  sfuNext.delete(peerId);
+  transportState.sfuPeerIds = sfuNext;
+  const txNext = new Map(transportState.pendingTransmissions);
+  txNext.delete(peerId);
+  transportState.pendingTransmissions = txNext;
+  if (transportState.watchingTransmissionPeerId === peerId) {
+    transportState.watchingTransmissionPeerId = null;
+  }
 });
 
 _transport.on("message", (peerId, data) => {
@@ -436,6 +455,10 @@ _video.on("trackAdded", (peerId, track, source) => {
       ? { ...existing, videoTrack: track }
       : { ...existing, screenTrack: track }
   );
+  // When any track is added, the peer is confirmed in the SFU room
+  if (!transportState.sfuPeerIds.has(peerId)) {
+    transportState.sfuPeerIds = new Set([...transportState.sfuPeerIds, peerId]);
+  }
 });
 
 _video.on("trackRemoved", (peerId, source) => {
@@ -449,6 +472,13 @@ _video.on("trackRemoved", (peerId, source) => {
   );
 });
 
+_video.on("peerJoined", (peerId) => {
+  // Peer is now active in the SFU room
+  if (!transportState.sfuPeerIds.has(peerId)) {
+    transportState.sfuPeerIds = new Set([...transportState.sfuPeerIds, peerId]);
+  }
+});
+
 _video.on("peerLeft", (peerId) => {
   const p = transportState.participants.get(peerId);
   if (!p) return;
@@ -456,6 +486,28 @@ _video.on("peerLeft", (peerId) => {
     peerId,
     { ...p, videoTrack: null, screenTrack: null }
   );
+  const next = new Set(transportState.sfuPeerIds);
+  next.delete(peerId);
+  transportState.sfuPeerIds = next;
+});
+
+_video.on("transmissionAvailable", (peerId, producerId) => {
+  // Record as pending — the peer is also now known to be in the SFU room
+  transportState.pendingTransmissions = new Map(transportState.pendingTransmissions).set(peerId, producerId);
+  if (!transportState.sfuPeerIds.has(peerId)) {
+    transportState.sfuPeerIds = new Set([...transportState.sfuPeerIds, peerId]);
+  }
+});
+
+_video.on("transmissionEnded", (peerId) => {
+  // Remove from pending
+  const next = new Map(transportState.pendingTransmissions);
+  next.delete(peerId);
+  transportState.pendingTransmissions = next;
+  // If we were watching this peer, clear that state
+  if (transportState.watchingTransmissionPeerId === peerId) {
+    transportState.watchingTransmissionPeerId = null;
+  }
 });
 
 _video.on("error", (err) => {
@@ -496,6 +548,9 @@ export function leaveRoom(): void {
   transportState.peerNames = new Map();
   transportState.peerAvatars = new Map();
   transportState.error = null;
+  transportState.sfuPeerIds = new Set();
+  transportState.pendingTransmissions = new Map();
+  transportState.watchingTransmissionPeerId = null;
 }
 
 export async function sendMessage(text: string): Promise<void> {
@@ -610,6 +665,9 @@ export function leaveCall(): void {
   transportState.localMicStream = null;
   transportState.cameraOff = true;
   transportState.screenSharing = false;
+  transportState.sfuPeerIds = new Set();
+  transportState.pendingTransmissions = new Map();
+  transportState.watchingTransmissionPeerId = null;
 }
 
 export function toggleMute(): void {
@@ -686,6 +744,28 @@ export function pauseVideo(source: VideoSource): void {
 
 export function resumeVideo(source: VideoSource): void {
   _video.resumeVideo(source);
+}
+
+export async function watchTransmission(peerId: string, producerId: string): Promise<void> {
+  transportState.error = null;
+  try {
+    await _video.watchTransmission(peerId, producerId);
+    transportState.watchingTransmissionPeerId = peerId;
+    // Remove from pending (mediasoup.ts deletes it too, but keep in sync)
+    const next = new Map(transportState.pendingTransmissions);
+    next.delete(peerId);
+    transportState.pendingTransmissions = next;
+  } catch (err) {
+    transportState.error = err instanceof Error ? err.message : String(err);
+    throw err;
+  }
+}
+
+export function stopWatchingTransmission(): void {
+  const peerId = transportState.watchingTransmissionPeerId;
+  if (!peerId) return;
+  _video.stopWatchingTransmission(peerId);
+  transportState.watchingTransmissionPeerId = null;
 }
 
 // ── Voice device / gain controls ─────────────────────────────────────────────

@@ -103,6 +103,10 @@ export interface VideoEvents {
   trackRemoved: (peerId: string, source: VideoSource) => void;
   peerJoined: (peerId: string) => void;
   peerLeft: (peerId: string) => void;
+  /** Fired when a remote peer starts a screen-share transmission (opt-in: not auto-consumed). */
+  transmissionAvailable: (peerId: string, producerId: string) => void;
+  /** Fired when a remote peer's transmission ends (they stopped sharing or left). */
+  transmissionEnded: (peerId: string) => void;
   error: (err: Error) => void;
 }
 
@@ -112,6 +116,12 @@ export interface VideoEvents {
  * Implemented by MediasoupVideo.
  *
  * Audio stays p2p via VoiceTransport.
+ *
+ * Screen shares are opt-in transmissions:
+ *   - Remote screen-share producers emit `transmissionAvailable` instead of auto-consuming.
+ *   - Call `watchTransmission(peerId, producerId)` to start consuming.
+ *   - Call `stopWatchingTransmission(peerId)` to stop.
+ *   - Max 1 transmission watched simultaneously (enforced by the caller).
  */
 export interface VideoTransport {
   join(roomCode: string): Promise<void>;
@@ -124,6 +134,13 @@ export interface VideoTransport {
   resumeVideo(source: VideoSource): void;
   isPaused(source: VideoSource): boolean;
   isPublishing(source: VideoSource): boolean;
+
+  /** Start consuming a pending transmission from a remote peer. */
+  watchTransmission(peerId: string, producerId: string): Promise<void>;
+  /** Stop consuming the transmission from a remote peer (closes screen consumer). */
+  stopWatchingTransmission(peerId: string): void;
+  /** Returns all pending (not yet watched) transmissions: peerId → producerId. */
+  getPendingTransmissions(): Map<string, string>;
 
   // self mute — pauses all outgoing producers without stopping tracks
   mute(): void;

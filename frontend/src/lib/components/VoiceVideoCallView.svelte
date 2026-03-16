@@ -11,6 +11,8 @@
     Phone,
     Maximize,
     Minimize,
+    Radio,
+    RadioTower,
   } from "@lucide/svelte";
   import { MonitorIcon } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
@@ -25,11 +27,15 @@
     label: string;
     avatarUrl?: string | null;
     isLocal: boolean;
-    kind: "camera" | "screen";
+    kind: "camera" | "screen" | "transmission";
     videoTrack: MediaStreamTrack | null;
     audioTrack?: MediaStreamTrack | null;
     peerId: string;
     muted?: boolean;
+    /** True when this is a screen-share transmission tile that hasn't been joined yet. */
+    isPending?: boolean;
+    /** The SFU producerId — only set on pending transmission tiles. */
+    producerId?: string;
   }
 
   interface Props {
@@ -46,12 +52,18 @@
     peerNames?: Map<string, string>;
     peerAvatars?: Map<string, string>;
     peerIdToDidFn?: (peerId: string) => string;
+    /** Pending (not yet watched) screen-share transmissions: peerId → producerId */
+    pendingTransmissions?: Map<string, string>;
+    /** The peerId whose transmission we are currently watching, or null */
+    watchingTransmissionPeerId?: string | null;
     onJoinCall: () => void;
     onLeaveCall: () => void;
     onToggleMute: () => void;
     onToggleCamera: () => void;
     onStartScreenShare: () => void;
     onStopScreenShare: () => void;
+    onWatchTransmission?: (peerId: string, producerId: string) => void;
+    onStopWatchingTransmission?: () => void;
     error?: string | null;
   }
 
@@ -69,12 +81,16 @@
     peerNames = new Map<string, string>(),
     peerAvatars = new Map<string, string>(),
     peerIdToDidFn = (id: string) => id,
+    pendingTransmissions = new Map<string, string>(),
+    watchingTransmissionPeerId = null,
     onJoinCall,
     onLeaveCall,
     onToggleMute,
     onToggleCamera,
     onStartScreenShare,
     onStopScreenShare,
+    onWatchTransmission,
+    onStopWatchingTransmission,
     error = null,
   }: Props = $props();
 
@@ -249,6 +265,23 @@
         });
       }
     }
+    // Pending transmission tiles — remote peers sharing their screen (opt-in)
+    for (const [peerId, producerId] of pendingTransmissions) {
+      const did = peerIdToDidFn(peerId);
+      const label = peerNames.get(did) ?? peerId.slice(0, 8);
+      const avatarUrl = peerAvatars.get(did) ?? null;
+      result.push({
+        id: `pending-tx-${peerId}`,
+        label,
+        avatarUrl,
+        isLocal: false,
+        kind: "transmission",
+        videoTrack: null,
+        peerId,
+        isPending: true,
+        producerId,
+      });
+    }
     return result;
   });
 
@@ -257,6 +290,8 @@
       localScreenTrack !== null ||
       [...participants.values()].some((p) => p.videoTrack || p.screenTrack)
   );
+
+  const isWatchingTransmission = $derived(watchingTransmissionPeerId !== null);
 
   const gridCols = $derived.by(() => {
     const n = tiles.length;
@@ -364,6 +399,7 @@
   onUnfocus: () => void
 )}
   {@const hasVideo = tile.videoTrack !== null}
+  {@const isPendingTx = tile.kind === "transmission" && tile.isPending}
   <button
     type="button"
     class="group relative flex items-center justify-center overflow-hidden rounded-lg bg-muted/30 cursor-pointer transition-shadow duration-200
@@ -371,13 +407,21 @@
       {compact ? 'aspect-video' : ''}
       {isSpeaking
       ? 'ring-2 ring-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
-      : ''}"
+      : ''}
+      {isPendingTx ? 'ring-1 ring-primary/40 hover:ring-primary/80' : ''}"
     onclick={() => {
+      if (isPendingTx) {
+        // Join this transmission (opt-in)
+        if (onWatchTransmission && tile.producerId) {
+          onWatchTransmission(tile.peerId, tile.producerId);
+        }
+        return;
+      }
       if (isOnlyOne) return;
       if (isFocused) onUnfocus();
       else onFocus();
     }}
-    aria-label={isFocused ? "Minimize tile" : `Focus ${tile.label}`}
+    aria-label={isPendingTx ? `Watch ${tile.label}'s transmission` : isFocused ? "Minimize tile" : `Focus ${tile.label}`}
   >
     {#if hasVideo}
       <video
@@ -406,18 +450,33 @@
         {/if}
       </div>
     {/if}
+
+    <!-- Pending transmission overlay — "Click to watch" -->
+    {#if isPendingTx}
+      <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/40 backdrop-blur-[2px] group-hover:bg-black/50 transition-colors">
+        <RadioTower class="size-6 text-primary animate-pulse" />
+        <span class="text-xs text-white font-mono font-semibold px-2 text-center leading-tight">
+          Click to watch
+        </span>
+      </div>
+    {/if}
+
     <!-- Name badge -->
     <div
       class="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5"
     >
-      {#if tile.kind === "screen"}
+      {#if tile.kind === "screen" || tile.kind === "transmission"}
         <MonitorIcon class="size-3 text-white" />
       {/if}
       {#if tile.kind === "camera" && tile.muted}
         <MicOff class="size-3 text-red-400" />
       {/if}
       <span class="text-[11px] leading-none text-white font-mono">
-        {tile.isLocal ? `${tile.label} (You)` : tile.label}
+        {tile.kind === "transmission"
+          ? `${tile.label}'s transmission`
+          : tile.isLocal
+            ? `${tile.label} (You)`
+            : tile.label}
       </span>
     </div>
   </button>
@@ -565,12 +624,26 @@
         size="icon"
         class="size-11 sm:size-8 hidden sm:inline-flex cursor-pointer"
         onclick={screenSharing ? onStopScreenShare : onStartScreenShare}
-        aria-label={screenSharing ? "Stop screen share" : "Share screen"}
+        aria-label={screenSharing ? "Stop transmission" : "Start transmission (screen share)"}
+        title={screenSharing ? "Stop transmission" : "Start transmission"}
       >
         {#if screenSharing}<MonitorOff
             class="size-4 sm:size-3.5"
           />{:else}<Monitor class="size-4 sm:size-3.5" />{/if}
       </Button>
+
+      {#if isWatchingTransmission}
+        <Button
+          variant="destructive"
+          size="icon"
+          class="size-11 sm:size-8 hidden sm:inline-flex cursor-pointer"
+          onclick={onStopWatchingTransmission}
+          aria-label="Stop watching transmission"
+          title="Stop watching transmission"
+        >
+          <Radio class="size-4 sm:size-3.5" />
+        </Button>
+      {/if}
 
       <Button
         variant="destructive"
