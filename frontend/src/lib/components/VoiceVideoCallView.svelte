@@ -704,7 +704,7 @@
           <Radio class="size-4 sm:size-3.5" />
         </Button>
 
-        <div class="hidden sm:flex items-center gap-2 px-2">
+        <div class="flex items-center gap-2 px-2">
           <input
             type="range"
             min="0"
@@ -715,7 +715,7 @@
               onTransmissionOutputVolumeChange?.(
                 Number((e.currentTarget as HTMLInputElement).value)
               )}
-            class="w-24 accent-primary"
+            class="w-16 sm:w-24 accent-primary"
             aria-label="Transmission volume"
             title="Transmission volume"
           />

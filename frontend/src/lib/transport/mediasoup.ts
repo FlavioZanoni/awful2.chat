@@ -231,9 +231,18 @@ export class MediasoupVideo implements VideoTransport {
     this.pendingTransmissions.delete(peerId);
     const all = this.pendingScreenProducerIds.get(peerId);
     if (all && all.size > 0) {
-      await Promise.all(
-        [...all].map((id) => this.consumeProducer(peerId, id, "screen"))
-      );
+      let consumed = 0;
+      for (const id of all) {
+        try {
+          await this.consumeProducer(peerId, id, "screen");
+          consumed += 1;
+        } catch {
+          // keep going; one bad producer shouldn't block the whole transmission
+        }
+      }
+      if (consumed === 0) {
+        throw new Error("Failed to consume transmission");
+      }
       return;
     }
     await this.consumeProducer(peerId, producerId, "screen");
