@@ -378,25 +378,24 @@ offline:  encrypt → store as PendingMessage → watch presence
 
 ---
 
-## Phase 5 — Voice/Video (mediasoup)
+## Phase 5 — Voice/Video (mediasoup) ✓ (implemented)
 
 **Goal:** voice and video calls
 
-### 5.1 1-on-1 → SimplePeer direct, no SFU
+### 5.1 1-on-1 / voice path → SimplePeer direct, no SFU
 
-### 5.2 Group (≤15) → mediasoup SFU, text+files remain p2p
+### 5.2 Group video (≤15) → mediasoup SFU, text+files remain p2p
 
-```typescript
-// transport-agnostic UI contract
-interface Participant {
-  id: string
-  stream: MediaStream
-  audioEnabled: boolean
-  videoEnabled: boolean
-}
+Implemented behavior:
 
-// mediasoup signals through existing data channel
-const device = new mediasoupClient.Device({ handlerFactory: SimplePeerHandler })
+```txt
+- Voice remains p2p (SimplePeer) with mic/device/gain controls.
+- Video (camera + screen) is SFU-backed via mediasoup signaling over /sfu WebSocket.
+- Remote screen share is opt-in: peers receive a pending transmission tile and click to watch.
+- "Stop watching" restores pending transmission tile while producer is still active.
+- Late joiners consume existing producers via replayed ms:new-producer events.
+- Client queues early producer notifications until recv transport is ready (race-safe).
+- Local camera/screen preview reuses the same captured stream for publish (single permission prompt).
 ```
 
 ---

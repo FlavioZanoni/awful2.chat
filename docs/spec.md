@@ -1,5 +1,41 @@
 # Technical Specsheet
 
+## Current Functionality (Implemented)
+
+```txt
+Identity and profile
+  - BIP39 mnemonic identity, password-encrypted at rest (AES-GCM)
+  - did:key derivation from ed25519 public key
+  - unlock/lock session model (private key in memory only while unlocked)
+  - local profile (nickname + avatar URL/data) and peer profile caching
+
+Rooms and chat
+  - create/join room by code
+  - room sidebar with saved rooms + unread tracking
+  - persistent local history (IndexedDB)
+  - lamport-ordered message log + watermark sync on reconnect
+  - pagination / load-more history
+  - peer profile broadcast and display in chat/call UI
+
+Collaboration data
+  - Yjs per-room channel doc for edits/deletes/reactions/pins/topic
+  - Yjs state sync over SimplePeer data channel (no y-webrtc)
+  - Yjs snapshot persistence in IndexedDB
+
+Files
+  - WebTorrent-based p2p file transfer
+  - infoHash metadata in messages
+  - small file blob persistence and re-seeding
+
+Calls
+  - p2p voice via SimplePeer + Web Audio input/output controls
+  - SFU video via mediasoup (camera + screen share)
+  - opt-in screen-share transmissions (remote screen is not auto-consumed)
+  - explicit "watch transmission" and "stop watching" flow
+  - late-join handling for existing SFU producers
+  - local camera/screen preview + remote participant tiles + active speaker ring
+```
+
 ## Data Layer Split
 
 ```
@@ -409,10 +445,26 @@ Yjs updates:       { kind: "yjs-update", doc, data: number[] }
 ## Voice/Video
 
 ```txt
-1-on-1:  SimplePeer direct
-group:   mediasoup SFU, ≤15 participants
-signals: flow through existing data channel via SimplePeerHandler
-UI:      Participant { id, stream: MediaStream, audioEnabled, videoEnabled }
+Voice:
+  - p2p via SimplePeer (mic only)
+  - Web Audio input gain + output volume + device selection
+
+Video:
+  - mediasoup SFU over dedicated /sfu WebSocket signaling
+  - camera and screen published as separate sources ("camera" | "screen")
+  - recv/send transports created after router capabilities exchange
+
+Screen share transmissions:
+  - remote screen producers emit transmissionAvailable(peerId, producerId)
+  - UI shows pending "Click to watch" tile (not auto-consumed)
+  - watchTransmission(peerId, producerId) consumes that producer
+  - stopWatchingTransmission() closes the screen consumer and restores pending tile
+  - transmissionEnded(peerId) clears pending/watching state
+
+Late join behavior:
+  - SFU replays existing producers to newly joined peers
+  - client queues early ms:new-producer signals until recv transport is ready
+  - prevents missing tiles/audio-video until peers rejoin
 ```
 
 ---

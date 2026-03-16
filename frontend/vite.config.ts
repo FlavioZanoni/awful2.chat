@@ -13,7 +13,4 @@ export default defineConfig({
       webtorrent: "webtorrent/webtorrent.min.js",
     },
   },
-  server: {
-    historyApiFallback: true,
-  },
 });

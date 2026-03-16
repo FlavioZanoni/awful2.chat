@@ -116,9 +116,9 @@ export class MediasoupVideo implements VideoTransport {
   // SFU WebSocket — opened on join(), closed on leave()
   private sfuWs: WebSocket | null = null;
 
-  async join(roomCode: string): Promise<void> {
+  async join(roomCode: string, peerId: string): Promise<void> {
     try {
-      await this.connectSfu(roomCode);
+      await this.connectSfu(roomCode, peerId);
 
       const capMsg =
         await this.request<MSCapabilities>(
@@ -304,7 +304,7 @@ export class MediasoupVideo implements VideoTransport {
    * Open a WebSocket to the SFU and send the join message.
    * Resolves once the connection is open and the join is sent.
    */
-  private connectSfu(roomCode: string): Promise<void> {
+  private connectSfu(roomCode: string, peerId: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const sfuUrl =
         (import.meta as any).env?.VITE_SFU_URL ??
@@ -320,7 +320,7 @@ export class MediasoupVideo implements VideoTransport {
           JSON.stringify({
             type: "join",
             roomCode,
-            peerId: this.selfId(),
+            peerId,
           })
         );
         resolve();
@@ -347,13 +347,6 @@ export class MediasoupVideo implements VideoTransport {
         this.pending.clear();
       };
     });
-  }
-
-  /** Stable per-page session id used as our SFU peer id. */
-  private _selfId: string | null = null;
-  private selfId(): string {
-    if (!this._selfId) this._selfId = crypto.randomUUID();
-    return this._selfId;
   }
 
   private async publish(

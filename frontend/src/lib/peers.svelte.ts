@@ -145,8 +145,8 @@ function createWTPeer(infoHash: string, peerId: string, initiator: boolean) {
   });
 
   peer.on("connect", () => {
-    const torrent = wtClient.get(infoHash);
-    if (torrent) {
+    const torrent = wtClient.get(infoHash) as any;
+    if (torrent && typeof torrent.addPeer === "function") {
       torrent.addPeer(peer);
     }
   });

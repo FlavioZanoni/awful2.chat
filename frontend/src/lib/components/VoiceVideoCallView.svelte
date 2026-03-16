@@ -12,7 +12,6 @@
     Maximize,
     Minimize,
     Radio,
-    RadioTower,
   } from "@lucide/svelte";
   import { MonitorIcon } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
@@ -156,9 +155,16 @@
   }
 
   $effect(() => {
+    const seen = new Set<string>();
     for (const [peerId, p] of participants) {
+      seen.add(peerId);
       if (p.audioTrack) startSpeakerDetection(peerId, p.audioTrack);
       else stopSpeakerDetection(peerId);
+    }
+    for (const peerId of analysers.keys()) {
+      if (peerId !== selfId && !seen.has(peerId)) {
+        stopSpeakerDetection(peerId);
+      }
     }
     if (!muted && localMicStream) {
       const track = localMicStream.getAudioTracks()[0];
@@ -171,6 +177,9 @@
       if (rafId) {
         cancelAnimationFrame(rafId);
         rafId = null;
+      }
+      for (const peerId of [...analysers.keys()]) {
+        stopSpeakerDetection(peerId);
       }
     };
   });
@@ -448,7 +457,7 @@
           : ''}"
         use:videoAction={tile.videoTrack!}
       ></video>
-    {:else}
+    {:else if !isPendingTx}
       <div
         class="relative flex items-center justify-center rounded-full bg-primary/20 font-semibold text-primary overflow-hidden font-mono transition-shadow duration-200
         {compact ? 'size-8 text-sm' : 'size-16 text-2xl'}"
@@ -467,36 +476,35 @@
 
     <!-- Pending transmission overlay — "Click to watch" -->
     {#if isPendingTx}
-      <div
-        class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/40 backdrop-blur-[2px] group-hover:bg-black/50 transition-colors"
-      >
-        <RadioTower class="size-6 text-primary animate-pulse" />
-        <span
-          class="text-xs text-white font-mono font-semibold px-2 text-center leading-tight"
+      <div class="absolute inset-0 grid place-items-center bg-muted/30">
+        <div
+          class="rounded-full border border-border bg-background/95 px-3 py-1.5 text-xs font-mono text-foreground shadow-sm transition-all group-hover:border-primary/50 group-hover:shadow-md"
         >
-          Click to watch
-        </span>
+          Click to watch {tile.label}
+        </div>
       </div>
     {/if}
 
     <!-- Name badge -->
-    <div
+    {#if !isPendingTx}
+      <div
       class="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5"
-    >
-      {#if tile.kind === "screen" || tile.kind === "transmission"}
-        <MonitorIcon class="size-3 text-white" />
-      {/if}
-      {#if tile.kind === "camera" && tile.muted}
-        <MicOff class="size-3 text-red-400" />
-      {/if}
-      <span class="text-[11px] leading-none text-white font-mono">
-        {tile.kind === "transmission"
-          ? `${tile.label}'s transmission`
-          : tile.isLocal
-            ? `${tile.label} (You)`
-            : tile.label}
-      </span>
-    </div>
+      >
+        {#if tile.kind === "screen" || tile.kind === "transmission"}
+          <MonitorIcon class="size-3 text-white" />
+        {/if}
+        {#if tile.kind === "camera" && tile.muted}
+          <MicOff class="size-3 text-red-400" />
+        {/if}
+        <span class="text-[11px] leading-none text-white font-mono">
+          {tile.kind === "transmission"
+            ? `${tile.label}'s transmission`
+            : tile.isLocal
+              ? `${tile.label} (You)`
+              : tile.label}
+        </span>
+      </div>
+    {/if}
   </button>
 {/snippet}
 

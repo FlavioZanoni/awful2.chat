@@ -20,6 +20,7 @@
     stopScreenShare,
     watchTransmission,
     stopWatchingTransmission,
+    setRoomName,
   } from "$lib/transport.svelte";
   import {
     roomsStore,
@@ -81,6 +82,7 @@
         roomCode;
       activeRoomCode = roomCode;
       activeRoomName = label;
+      setRoomName(label);
       await saveRoom(roomCode, label);
       history.pushState({ roomCode }, "", `/r/${roomCode}`);
     } catch (err) {
@@ -168,7 +170,7 @@
         {#if activeRoomCode}
           <ChatView
             roomCode={activeRoomCode}
-            roomName={activeRoomName}
+            roomName={transportState.roomName || activeRoomName}
             peers={transportState.peers}
             messages={transportState.messages}
             participants={transportState.participants}

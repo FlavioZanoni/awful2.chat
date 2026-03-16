@@ -31,6 +31,7 @@ export interface ParticipantState {
 interface TransportState {
   connected: boolean;
   roomCode: string | null;
+  roomName: string;
   peers: string[];
   messages: Message[];
   inCall: boolean;
@@ -59,6 +60,7 @@ interface TransportState {
 export const transportState = $state<TransportState>({
   connected: false,
   roomCode: null,
+  roomName: "",
   peers: [],
   messages: [],
   inCall: false,
@@ -113,8 +115,32 @@ function decode(data: Uint8Array): unknown {
   return JSON.parse(new TextDecoder().decode(data));
 }
 
+function normalizeAvatarUrl(url: unknown): string | undefined {
+  if (typeof url !== "string") return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return undefined;
+    }
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 function _sendCallPresence(peerId?: string): void {
   const payload = encode({ kind: "call-presence", inCall: transportState.inCall });
+  if (peerId) {
+    _transport.send(peerId, payload);
+    return;
+  }
+  _transport.broadcast(payload);
+}
+
+function _sendRoomName(peerId?: string): void {
+  const name = transportState.roomName.trim().slice(0, 64);
+  if (!name) return;
+  const payload = encode({ kind: "room-name", name });
   if (peerId) {
     _transport.send(peerId, payload);
     return;
@@ -287,6 +313,7 @@ function _handleSyncComplete(peerId: string): void {
 _transport.on("connect", (peerId) => {
   transportState.peers = _transport.peers();
   _broadcastProfile();
+  _sendRoomName(peerId);
   if (transportState.inCall) {
     _sendCallPresence(peerId);
   }
@@ -336,8 +363,7 @@ _transport.on("message", (peerId, data) => {
     if (envelope.kind === "profile" && typeof envelope.name === "string") {
       const did = typeof envelope.did === "string" ? envelope.did : peerId;
       _peerIdToDid.set(peerId, did);
-      const avatarUrl =
-        typeof envelope.avatarUrl === "string" ? envelope.avatarUrl : undefined;
+      const avatarUrl = normalizeAvatarUrl(envelope.avatarUrl);
       const names = new Map(transportState.peerNames);
       names.set(did, envelope.name);
       transportState.peerNames = names;
@@ -369,6 +395,14 @@ _transport.on("message", (peerId, data) => {
       if (inCall) next.add(peerId);
       else next.delete(peerId);
       transportState.callPeerIds = next;
+      return;
+    }
+
+    if (envelope.kind === "room-name" && typeof envelope.name === "string") {
+      const name = envelope.name.trim().slice(0, 64);
+      if (name.length > 0) {
+        transportState.roomName = name;
+      }
       return;
     }
 
@@ -422,13 +456,14 @@ _transport.on("message", (peerId, data) => {
         putMessage(msg).catch(() => {});
         setWatermark(msg.roomCode, msg.senderId, msg.lamport).catch(() => {});
         refreshUnreadCount(msg.roomCode).catch(() => {});
-
-        transportState.messages = [...transportState.messages, msg].sort(
-          (a, b) =>
-            a.lamport !== b.lamport
-              ? a.lamport - b.lamport
-              : a.senderId.localeCompare(b.senderId)
-        );
+        if (!transportState.messages.some((m) => m.id === msg.id)) {
+          transportState.messages = [...transportState.messages, msg].sort(
+            (a, b) =>
+              a.lamport !== b.lamport
+                ? a.lamport - b.lamport
+                : a.senderId.localeCompare(b.senderId)
+          );
+        }
       }
     }
   } catch {}
@@ -563,6 +598,7 @@ export async function joinRoom(roomCode: string): Promise<void> {
     await _transport.connect(roomCode);
     transportState.connected = true;
     transportState.roomCode = roomCode;
+    transportState.roomName = "";
     transportState.peers = _transport.peers();
     await _broadcastProfile();
   } catch (err) {
@@ -582,6 +618,7 @@ export function leaveRoom(): void {
   _peerIdToDid.clear();
   transportState.connected = false;
   transportState.roomCode = null;
+  transportState.roomName = "";
   transportState.peers = [];
   transportState.messages = [];
   transportState.participants = new Map();
@@ -673,6 +710,11 @@ export function broadcastProfile(): void {
   _broadcastProfile().catch(() => {});
 }
 
+export function setRoomName(name: string): void {
+  transportState.roomName = name.trim().slice(0, 64);
+  _sendRoomName();
+}
+
 export function selfId(): string {
   return identityStore.did ?? _transport.selfId();
 }
@@ -685,12 +727,21 @@ export async function joinCall(): Promise<void> {
   transportState.error = null;
   try {
     await _voice.join(transportState.roomCode ?? "");
+    await _video.join(transportState.roomCode ?? "", _transport.selfId());
     transportState.inCall = true;
     _sendCallPresence();
     transportState.muted = _voice.isMuted();
     transportState.localMicStream = _voice.getMicStream();
-    await _video.join(transportState.roomCode ?? "");
   } catch (err) {
+    _voice.leave();
+    _video.leave();
+    transportState.inCall = false;
+    transportState.muted = false;
+    transportState.localCameraStream = null;
+    transportState.localScreenStream = null;
+    transportState.localMicStream = null;
+    transportState.cameraOff = true;
+    transportState.screenSharing = false;
     transportState.error = err instanceof Error ? err.message : String(err);
     throw err;
   }

@@ -432,6 +432,14 @@ async function main(): Promise<void> {
           consumers: new Map(),
         };
         const room = getOrCreateRoom(joinMsg.roomCode);
+        if (room.has(peer.peerId)) {
+          console.warn(
+            `[sfu] duplicate peerId ${peer.peerId} in room ${peer.roomCode}; rejecting join`
+          );
+          ws.close();
+          peer = null;
+          return;
+        }
         room.set(peer.peerId, peer);
 
         // Send existing producers to the newly joined peer so it can consume them
