@@ -112,7 +112,10 @@
     const existing = analysers.get(peerId);
     if (existing) {
       // Same track — nothing to do
-      if (analysers.get(peerId)?.source.mediaStream.getAudioTracks()[0] === track) return;
+      if (
+        analysers.get(peerId)?.source.mediaStream.getAudioTracks()[0] === track
+      )
+        return;
       stopSpeakerDetection(peerId);
     }
     try {
@@ -421,7 +424,11 @@
       if (isFocused) onUnfocus();
       else onFocus();
     }}
-    aria-label={isPendingTx ? `Watch ${tile.label}'s transmission` : isFocused ? "Minimize tile" : `Focus ${tile.label}`}
+    aria-label={isPendingTx
+      ? `Watch ${tile.label}'s transmission`
+      : isFocused
+        ? "Minimize tile"
+        : `Focus ${tile.label}`}
   >
     {#if hasVideo}
       <video
@@ -453,9 +460,13 @@
 
     <!-- Pending transmission overlay — "Click to watch" -->
     {#if isPendingTx}
-      <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/40 backdrop-blur-[2px] group-hover:bg-black/50 transition-colors">
+      <div
+        class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/40 backdrop-blur-[2px] group-hover:bg-black/50 transition-colors"
+      >
         <RadioTower class="size-6 text-primary animate-pulse" />
-        <span class="text-xs text-white font-mono font-semibold px-2 text-center leading-tight">
+        <span
+          class="text-xs text-white font-mono font-semibold px-2 text-center leading-tight"
+        >
           Click to watch
         </span>
       </div>
@@ -498,7 +509,11 @@
             class="flex size-16 sm:size-20 items-center justify-center rounded-full bg-primary/20 text-2xl font-semibold text-primary ring-2 ring-background font-mono overflow-hidden"
           >
             {#if peerAvatars.get(did)}
-              <img src={peerAvatars.get(did)} alt={peerNames.get(did) ?? peerId} class="size-full object-cover" />
+              <img
+                src={peerAvatars.get(did)}
+                alt={peerNames.get(did) ?? peerId}
+                class="size-full object-cover"
+              />
             {:else}
               {(peerNames.get(did) ?? peerId).charAt(0).toUpperCase()}
             {/if}
@@ -624,7 +639,9 @@
         size="icon"
         class="size-11 sm:size-8 hidden sm:inline-flex cursor-pointer"
         onclick={screenSharing ? onStopScreenShare : onStartScreenShare}
-        aria-label={screenSharing ? "Stop transmission" : "Start transmission (screen share)"}
+        aria-label={screenSharing
+          ? "Stop transmission"
+          : "Start transmission (screen share)"}
         title={screenSharing ? "Stop transmission" : "Start transmission"}
       >
         {#if screenSharing}<MonitorOff

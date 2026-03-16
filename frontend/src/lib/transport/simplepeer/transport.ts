@@ -34,6 +34,9 @@ export class SimplePeerTransport implements PeerTransport, SimplePeerExtension {
   private streamHandler:
     | ((peerId: string, stream: MediaStream) => void)
     | null = null;
+  // Streams to include when creating new peer connections — set by VoiceTransport
+  // before a new peer-joined arrives, so the stream is in the offer from the start.
+  private initialStreams: MediaStream[] = [];
 
   async connect(roomCode: string): Promise<void> {
     this.roomCode = roomCode;
@@ -125,6 +128,10 @@ export class SimplePeerTransport implements PeerTransport, SimplePeerExtension {
     this.streamHandler = handler;
   }
 
+  setInitialStreams(streams: MediaStream[]): void {
+    this.initialStreams = streams;
+  }
+
   private handleServerMessage(msg: ServerMessage): void {
     switch (msg.type) {
       case "peer-joined":
@@ -143,7 +150,7 @@ export class SimplePeerTransport implements PeerTransport, SimplePeerExtension {
     const peer = new SimplePeer({
       initiator,
       trickle: true,
-      streams: [],
+      streams: [...this.initialStreams],
       config: {
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },

@@ -56,12 +56,12 @@ export class SimplePeerVoice implements VoiceTransport {
   private handlers: Map<keyof VoiceEvents, Set<Function>> = new Map();
 
   constructor(private transport: PeerTransport & SimplePeerExtension) {
-    // A new peer connects while we are already in a call — send our stream to them.
+    // When a new peer connects while we are already in a call:
+    // The stream was already included in the peer constructor via setInitialStreams,
+    // so we don't need addStream here (avoids mid-connection renegotiation).
     // Their stream will arrive via onStream when they add theirs.
-    this.transport.on("connect", (peerId) => {
-      if (this.audioCtx && this.processedStream) {
-        this.transport.addStream(peerId, this.processedStream);
-      }
+    this.transport.on("connect", (_peerId) => {
+      // nothing needed — stream was passed at peer creation time via setInitialStreams
     });
 
     // peer disconnects — clean up their audio
@@ -88,7 +88,14 @@ export class SimplePeerVoice implements VoiceTransport {
       // no mic available — join in listen-only mode
     }
 
-    // send our stream to all already-connected peers and request theirs
+    // Register our stream so any NEW peers that join the room get it at
+    // connection creation time (included in the SimplePeer constructor streams[]).
+    if (this.processedStream) {
+      this.transport.setInitialStreams([this.processedStream]);
+    }
+
+    // Send our stream to all already-connected peers via addStream (renegotiation).
+    // These peers exist before our join() call, so setInitialStreams won't help them.
     for (const peerId of this.transport.peers()) {
       if (this.processedStream) {
         this.transport.addStream(peerId, this.processedStream);
@@ -103,6 +110,9 @@ export class SimplePeerVoice implements VoiceTransport {
         this.transport.removeStream(peerId, this.processedStream);
       }
     }
+
+    // clear initial streams so future peer connections don't get stale audio
+    this.transport.setInitialStreams([]);
 
     // tear down all remote peers
     for (const peerId of [...this.remotePeers.keys()]) {
@@ -147,8 +157,13 @@ export class SimplePeerVoice implements VoiceTransport {
 
     const oldStream = this.processedStream;
 
-    // in a call — hot-swap the mic
+    // hot-swap the mic
     await this.startMic(deviceId);
+
+    // update the initial stream for future peer connections
+    if (this.processedStream) {
+      this.transport.setInitialStreams([this.processedStream]);
+    }
 
     // replace stream on all connected peers
     for (const peerId of this.transport.peers()) {

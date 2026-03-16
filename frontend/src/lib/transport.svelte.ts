@@ -692,7 +692,9 @@ export async function startCamera(): Promise<void> {
     });
     transportState.localCameraStream = stream;
     transportState.cameraOff = false;
-    await _video.startCamera();
+    // Pass the already-acquired stream so mediasoup publishes the same tracks
+    // without triggering a second getUserMedia permission prompt.
+    await _video.startCamera(stream);
   } catch (err) {
     transportState.error = err instanceof Error ? err.message : String(err);
     throw err;
@@ -724,7 +726,9 @@ export async function startScreenShare(): Promise<void> {
     transportState.localScreenStream = stream;
     transportState.screenSharing = true;
     stream.getVideoTracks()[0].onended = () => stopScreenShare();
-    await _video.startScreenShare();
+    // Pass the already-acquired stream so mediasoup publishes the same tracks
+    // without triggering a second getDisplayMedia permission prompt.
+    await _video.startScreenShare(stream);
   } catch (err) {
     transportState.error = err instanceof Error ? err.message : String(err);
     throw err;

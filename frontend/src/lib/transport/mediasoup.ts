@@ -103,6 +103,9 @@ export class MediasoupVideo implements VideoTransport {
   // Screen-share producers that are available but not yet consumed (opt-in transmissions)
   private pendingTransmissions: Map<string, string> = new Map(); // peerId → producerId
 
+  // ms:new-producer messages that arrived before recvTransport was ready
+  private queuedProducers: MSNewProducer[] = [];
+
   // mute/volume state
   private muted: boolean = false;
   private outputGainValue: number = 1.0;
@@ -155,6 +158,7 @@ export class MediasoupVideo implements VideoTransport {
     this.active.clear();
     this.paused.clear();
     this.pendingTransmissions.clear();
+    this.queuedProducers = [];
     this.muted = false;
     this.device = null;
     this.sendTransport = null;
@@ -163,8 +167,8 @@ export class MediasoupVideo implements VideoTransport {
     this.pending.clear();
   }
 
-  async startCamera(): Promise<void> {
-    const stream = await navigator.mediaDevices.getUserMedia({
+  async startCamera(stream?: MediaStream): Promise<void> {
+    const s = stream ?? await navigator.mediaDevices.getUserMedia({
       video: {
         width: { ideal: 1280 },
         height: { ideal: 720 },
@@ -172,22 +176,22 @@ export class MediasoupVideo implements VideoTransport {
       },
       audio: false, // audio stays p2p via VoiceTransport
     });
-    await this.publish(stream, "camera");
+    await this.publish(s, "camera");
   }
 
   stopCamera(): void {
     this.stopSource("camera");
   }
 
-  async startScreenShare(): Promise<void> {
-    const stream = await navigator.mediaDevices.getDisplayMedia({
+  async startScreenShare(stream?: MediaStream): Promise<void> {
+    const s = stream ?? await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: { ideal: 15 } }, // lower framerate for screen share
       audio: false,
     });
-    await this.publish(stream, "screen");
+    await this.publish(s, "screen");
 
     // browser fires this when user clicks "stop sharing"
-    stream.getVideoTracks()[0].onended = () => this.stopScreenShare();
+    s.getVideoTracks()[0].onended = () => this.stopScreenShare();
   }
 
   stopScreenShare(): void {
@@ -441,6 +445,12 @@ export class MediasoupVideo implements VideoTransport {
         callback();
       }
     );
+
+    // Drain any ms:new-producer messages that arrived before we were ready
+    const queued = this.queuedProducers.splice(0);
+    for (const producer of queued) {
+      this.handleSignal(producer);
+    }
   }
 
   private signal(msg: MSMessage): void {
@@ -460,6 +470,11 @@ export class MediasoupVideo implements VideoTransport {
 
     switch (msg.type) {
       case "ms:new-producer":
+        // If recvTransport isn't ready yet, queue and process after join() completes.
+        if (!this.recvTransport) {
+          this.queuedProducers.push(msg);
+          break;
+        }
         // Camera is auto-consumed as before.
         // Screen share is opt-in — emit transmissionAvailable so the UI can show a tile.
         if (msg.source === "screen") {

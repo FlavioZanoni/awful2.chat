@@ -40,6 +40,12 @@ export interface SimplePeerExtension {
   addStream(peerId: string, stream: MediaStream): void;
   removeStream(peerId: string, stream: MediaStream): void;
   onStream(handler: (peerId: string, stream: MediaStream) => void): void;
+  /**
+   * Called by VoiceTransport to register a stream that should be included
+   * when a NEW peer connection is created (i.e. when peer-joined fires while
+   * already in a call). Avoids mid-connection renegotiation via addStream.
+   */
+  setInitialStreams(streams: MediaStream[]): void;
 }
 
 export interface VoiceEvents {
@@ -126,9 +132,11 @@ export interface VideoEvents {
 export interface VideoTransport {
   join(roomCode: string): Promise<void>;
   leave(): void;
-  startCamera(): Promise<void>;
+  /** If `stream` is provided, publish it directly (avoids a second getUserMedia call). */
+  startCamera(stream?: MediaStream): Promise<void>;
   stopCamera(): void;
-  startScreenShare(): Promise<void>;
+  /** If `stream` is provided, publish it directly (avoids a second getDisplayMedia call). */
+  startScreenShare(stream?: MediaStream): Promise<void>;
   stopScreenShare(): void;
   pauseVideo(source: VideoSource): void;
   resumeVideo(source: VideoSource): void;
