@@ -104,6 +104,8 @@ export class MediasoupVideo implements VideoTransport {
   private pendingTransmissions: Map<string, string> = new Map(); // peerId → producerId
   // All pending screen producers (video + optional audio) for a peer.
   private pendingScreenProducerIds: Map<string, Set<string>> = new Map();
+  // Peers whose transmission the user is actively watching.
+  private watchingTransmissionPeers: Set<string> = new Set();
 
   // ms:new-producer messages that arrived before recvTransport was ready
   private queuedProducers: MSNewProducer[] = [];
@@ -163,6 +165,7 @@ export class MediasoupVideo implements VideoTransport {
     this.paused.clear();
     this.pendingTransmissions.clear();
     this.pendingScreenProducerIds.clear();
+    this.watchingTransmissionPeers.clear();
     this.queuedProducers = [];
     this.muted = false;
     this.device = null;
@@ -229,6 +232,7 @@ export class MediasoupVideo implements VideoTransport {
   async watchTransmission(peerId: string, producerId: string): Promise<void> {
     // Remove from pending so the tile changes from "click to watch" to live video
     this.pendingTransmissions.delete(peerId);
+    this.watchingTransmissionPeers.add(peerId);
     const all = this.pendingScreenProducerIds.get(peerId);
     if (all && all.size > 0) {
       let consumed = 0;
@@ -250,6 +254,7 @@ export class MediasoupVideo implements VideoTransport {
 
   /** Stop watching a transmission — close all screen consumers for that peer. */
   stopWatchingTransmission(peerId: string): void {
+    this.watchingTransmissionPeers.delete(peerId);
     const peerConsumers = this.consumers.get(peerId);
     if (!peerConsumers) return;
     const screenConsumers = peerConsumers.filter((c) => c.source === "screen");
@@ -506,6 +511,18 @@ export class MediasoupVideo implements VideoTransport {
             this.pendingScreenProducerIds.set(msg.peerId, new Set());
           }
           this.pendingScreenProducerIds.get(msg.peerId)!.add(msg.producerId);
+
+          // If we're already watching this peer's transmission, auto-consume
+          // additional screen producers (e.g. tab audio) instead of showing
+          // a second pending tile.
+          if (
+            this.watchingTransmissionPeers.has(msg.peerId) ||
+            this.consumers.get(msg.peerId)?.some((c) => c.source === "screen")
+          ) {
+            this.consumeProducer(msg.peerId, msg.producerId, "screen").catch(() => {});
+            break;
+          }
+
           this.pendingTransmissions.set(msg.peerId, msg.producerId);
           this.emit("transmissionAvailable", msg.peerId, msg.producerId);
         } else {
@@ -525,6 +542,7 @@ export class MediasoupVideo implements VideoTransport {
           this.emit("transmissionEnded", msg.peerId);
         }
         this.pendingScreenProducerIds.delete(msg.peerId);
+        this.watchingTransmissionPeers.delete(msg.peerId);
         break;
     }
   }
