@@ -16,10 +16,21 @@ import {
   putPeerProfile,
   getAllPeerProfiles,
 } from "./storage";
-import { type Message, type WireMessage, MessageType } from "./types/message";
+import {
+  MessageType,
+  wireToMessage,
+  messageToWire,
+  type Message,
+  type ChatMessageType,
+  type AnyWireMessage,
+  type WireChatMessage,
+  type WireProfile,
+} from "./types/message";
 import { refreshUnreadCount, roomsStore } from "./rooms.svelte";
 
 export type { Message };
+
+// ── State shapes ──────────────────────────────────────────────────────────────
 
 export interface ParticipantState {
   peerId: string;
@@ -47,15 +58,10 @@ interface TransportState {
   peerNames: Map<string, string>;
   peerAvatars: Map<string, string>;
   error: string | null;
-  /** Peers currently known to be in voice call (from call presence signaling). */
   callPeerIds: Set<string>;
-  /** Peers known to be in the SFU room (have at least one producer). Used for the "join call" banner. */
   sfuPeerIds: Set<string>;
-  /** Pending screen-share transmissions: peerId → producerId. Not yet being watched. */
   pendingTransmissions: Map<string, string>;
-  /** The peerId of the transmission currently being watched, or null. */
   watchingTransmissionPeerId: string | null;
-  /** The producerId of the transmission currently being watched, or null. */
   watchingTransmissionProducerId: string | null;
 }
 
@@ -88,6 +94,13 @@ let _lamport = 0;
 let _voiceOutputBeforeDeafen = 1;
 let _videoOutputBeforeDeafen = 1;
 
+const BATCH_SIZE = 20;
+const _peerIdToDid = new Map<string, string>();
+
+const _transport = new SimplePeerTransport();
+const _voice = new SimplePeerVoice(_transport);
+const _video = new MediasoupVideo();
+
 function lamportSend(): number {
   _lamport += 1;
   return _lamport;
@@ -96,21 +109,6 @@ function lamportSend(): number {
 function lamportReceive(remote: number): void {
   _lamport = Math.max(_lamport, remote) + 1;
 }
-
-const _transport = new SimplePeerTransport();
-const _voice = new SimplePeerVoice(_transport);
-const _video = new MediasoupVideo();
-
-// ── Sync state ───────────────────────────────────────────────────────────────
-
-const SYNC_TIMEOUT_MS = 10_000;
-const BATCH_SIZE = 20;
-
-let _syncTimeoutId: ReturnType<typeof setTimeout> | null = null;
-let _pendingSyncPeer: string | null = null;
-const _peerIdToDid = new Map<string, string>();
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function encode(obj: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(obj));
@@ -124,37 +122,31 @@ function normalizeAvatarUrl(url: unknown): string | undefined {
   if (typeof url !== "string") return undefined;
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
       return undefined;
-    }
     return parsed.toString();
   } catch {
     return undefined;
   }
 }
 
+// ── Senders ───────────────────────────────────────────────────────────────────
+
 function _sendCallPresence(peerId?: string): void {
-  const payload = encode({ kind: "call-presence", inCall: transportState.inCall });
-  if (peerId) {
-    _transport.send(peerId, payload);
-    return;
-  }
-  _transport.broadcast(payload);
+  const payload = encode({
+    type: MessageType.CallPresence,
+    inCall: transportState.inCall,
+  });
+  if (peerId) _transport.send(peerId, payload);
+  else _transport.broadcast(payload);
 }
 
 function _sendRoomName(peerId?: string): void {
   const name = transportState.roomName.trim().slice(0, 64);
   if (!name) return;
-  const payload = encode({ kind: "room-name", name });
-  if (peerId) {
-    _transport.send(peerId, payload);
-    return;
-  }
-  _transport.broadcast(payload);
-}
-
-function selectSyncHost(peers: string[], myId: string): string {
-  return [...peers, myId].sort()[0];
+  const payload = encode({ type: MessageType.RoomName, name });
+  if (peerId) _transport.send(peerId, payload);
+  else _transport.broadcast(payload);
 }
 
 async function _broadcastProfile(): Promise<void> {
@@ -170,9 +162,19 @@ async function _broadcastProfile(): Promise<void> {
         .join("");
       avatarUrl = `data:image/jpeg;base64,${btoa(binary)}`;
     }
-    _transport.broadcast(encode({ kind: "profile", name, did, avatarUrl }));
+    _transport.broadcast(
+      encode({ type: MessageType.Profile, name, did, avatarUrl })
+    );
   } catch {}
 }
+
+async function _sendDigest(peerId: string): Promise<void> {
+  if (!transportState.roomCode) return;
+  const watermarks = await getWatermarksForRoom(transportState.roomCode);
+  _transport.send(peerId, encode({ type: MessageType.SyncDigest, watermarks }));
+}
+
+// ── History ───────────────────────────────────────────────────────────────────
 
 async function _loadHistory(roomCode: string): Promise<void> {
   const [msgs, profiles] = await Promise.all([
@@ -195,65 +197,53 @@ async function _loadHistory(roomCode: string): Promise<void> {
   }
 }
 
-async function _sendSyncRequest(peerId: string): Promise<void> {
-  if (!transportState.roomCode) return;
-  const watermarks = await getWatermarksForRoom(transportState.roomCode);
-  _transport.send(
-    peerId,
-    encode({
-      kind: "wire",
-      type: MessageType.SyncRequest,
-      roomCode: transportState.roomCode,
-      watermarks,
-    })
-  );
-  _pendingSyncPeer = peerId;
-  if (_syncTimeoutId) clearTimeout(_syncTimeoutId);
-  _syncTimeoutId = setTimeout(() => _onSyncTimeout(), SYNC_TIMEOUT_MS);
-}
+// ── Sync ──────────────────────────────────────────────────────────────────────
 
-function _onSyncTimeout(): void {
-  _syncTimeoutId = null;
-  _pendingSyncPeer = null;
-  const myId = _transport.selfId();
-  const host = selectSyncHost(_transport.peers(), myId);
-  if (host !== myId) {
-    _sendSyncRequest(host).catch(() => {});
+async function _handleDigest(
+  peerId: string,
+  theirWatermarks: Record<string, number>
+): Promise<void> {
+  if (!transportState.roomCode) return;
+  const mine = await getWatermarksForRoom(transportState.roomCode);
+
+  const iNeedSenders = Object.keys(theirWatermarks).filter(
+    (sid) => (mine[sid] ?? -1) < theirWatermarks[sid]
+  );
+  const theyNeedSenders = Object.keys(mine).filter(
+    (sid) => (theirWatermarks[sid] ?? -1) < mine[sid]
+  );
+
+  if (theyNeedSenders.length > 0) await _pushMissingTo(peerId, theirWatermarks);
+  if (iNeedSenders.length > 0) {
+    _transport.send(
+      peerId,
+      encode({ type: MessageType.SyncRequest, watermarks: mine })
+    );
   }
 }
 
-async function _handleSyncRequest(
+async function _pushMissingTo(
   peerId: string,
-  watermarks: Record<string, number>
+  theirWatermarks: Record<string, number>
 ): Promise<void> {
   if (!transportState.roomCode) return;
-  // Use getAllMessages (no page limit) so we send the full history, not just the latest 50
-  const allMsgs = await getAllMessages(transportState.roomCode);
+  const all = await getAllMessages(transportState.roomCode);
 
-  const missing = allMsgs.filter(
-    (m) => m.lamport > (watermarks[m.senderId] ?? 0)
-  );
+  const missing = all
+    .filter((m) => m.lamport > (theirWatermarks[m.senderId] ?? -1))
+    .map(messageToWire);
 
-  const batches: Message[][] = [];
+  if (!missing.length) return;
+
+  const batches: WireChatMessage[][] = [];
   for (let i = 0; i < missing.length; i += BATCH_SIZE) {
     batches.push(missing.slice(i, i + BATCH_SIZE));
   }
-
-  _transport.send(
-    peerId,
-    encode({
-      kind: "wire",
-      type: MessageType.SyncOffer,
-      totalMessages: missing.length,
-      totalBatches: batches.length,
-    })
-  );
 
   for (let i = 0; i < batches.length; i++) {
     _transport.send(
       peerId,
       encode({
-        kind: "wire",
         type: MessageType.SyncBatch,
         messages: batches[i],
         batchIndex: i,
@@ -262,31 +252,33 @@ async function _handleSyncRequest(
     );
   }
 
-  _transport.send(
-    peerId,
-    encode({ kind: "wire", type: MessageType.SyncComplete })
-  );
+  _transport.send(peerId, encode({ type: MessageType.SyncComplete }));
 }
 
-async function _handleSyncBatch(messages: Message[]): Promise<void> {
-  if (!messages.length) return;
+async function _handleSyncRequest(
+  peerId: string,
+  theirWatermarks: Record<string, number>
+): Promise<void> {
+  await _pushMissingTo(peerId, theirWatermarks);
+}
 
-  // Write all to IDB — put is idempotent so duplicates are safe
-  await bulkPutMessages(messages);
+async function _handleSyncBatch(messages: WireChatMessage[]): Promise<void> {
+  if (!messages.length || !transportState.roomCode) return;
 
-  for (const m of messages) {
+  const roomCode = transportState.roomCode;
+  const fullMessages = messages.map((w) => wireToMessage(w, roomCode));
+
+  await bulkPutMessages(fullMessages);
+
+  for (const m of fullMessages) {
     lamportReceive(m.lamport);
-    // setWatermark now has max semantics so batch ordering doesn't matter
     await setWatermark(m.roomCode, m.senderId, m.lamport);
   }
 
-  if (transportState.roomCode) {
-    refreshUnreadCount(transportState.roomCode).catch(() => {});
-  }
+  refreshUnreadCount(roomCode).catch(() => {});
 
-  // Merge into in-memory list (dedup by id, then sort)
   const existingIds = new Set(transportState.messages.map((m) => m.id));
-  const newMsgs = messages.filter((m) => !existingIds.has(m.id));
+  const newMsgs = fullMessages.filter((m) => !existingIds.has(m.id));
   if (newMsgs.length > 0) {
     transportState.messages = [...transportState.messages, ...newMsgs].sort(
       (a, b) =>
@@ -297,52 +289,123 @@ async function _handleSyncBatch(messages: Message[]): Promise<void> {
   }
 }
 
-async function _reloadMessagesFromIDB(): Promise<void> {
-  if (!transportState.roomCode) return;
-  // Reload the latest page from IDB to reflect everything written during sync
-  const msgs = await getMessages(transportState.roomCode);
-  transportState.messages = msgs;
-  if (msgs.length > 0) {
-    _lamport = Math.max(_lamport, ...msgs.map((m) => m.lamport));
-  }
-}
-
 function _handleSyncComplete(peerId: string): void {
-  if (_pendingSyncPeer === peerId) {
-    if (_syncTimeoutId) clearTimeout(_syncTimeoutId);
-    _syncTimeoutId = null;
-    _pendingSyncPeer = null;
-    // Reload the display page from IDB — all batches have been written,
-    // so the in-memory view is now authoritative and correctly paginated
-    _reloadMessagesFromIDB().catch(() => {});
+  transportState.messages = [...transportState.messages].sort((a, b) =>
+    a.lamport !== b.lamport
+      ? a.lamport - b.lamport
+      : a.senderId.localeCompare(b.senderId)
+  );
+  for (const pid of _transport.peers()) {
+    if (pid !== peerId) _sendDigest(pid).catch(() => {});
   }
 }
 
-// ── Transport event handlers ─────────────────────────────────────────────────
+// ── Message handlers ──────────────────────────────────────────────────────────
+
+function _handleProfile(peerId: string, msg: WireProfile): void {
+  const did = msg.did ?? peerId;
+  _peerIdToDid.set(peerId, did);
+
+  const avatarUrl = normalizeAvatarUrl(msg.avatarUrl);
+
+  const names = new Map(transportState.peerNames);
+  names.set(did, msg.name);
+  transportState.peerNames = names;
+
+  const avatars = new Map(transportState.peerAvatars);
+  if (avatarUrl) avatars.set(did, avatarUrl);
+  else avatars.delete(did);
+  transportState.peerAvatars = avatars;
+
+  getPeerProfile(did)
+    .then((existing) =>
+      putPeerProfile({
+        did,
+        isMe: false,
+        nickname: msg.name,
+        pfpURL: avatarUrl,
+        updatedAt: Date.now(),
+        ...(existing?.pfpData ? { pfpData: existing.pfpData } : {}),
+      }).catch(() => {})
+    )
+    .catch(() => {});
+}
+
+function _handleCallPresence(peerId: string, inCall: boolean): void {
+  const next = new Set(transportState.callPeerIds);
+
+  if (inCall) {
+    next.add(peerId);
+  } else {
+    next.delete(peerId);
+
+    const parts = new Map(transportState.participants);
+    parts.delete(peerId);
+    transportState.participants = parts;
+
+    const sfuNext = new Set(transportState.sfuPeerIds);
+    sfuNext.delete(peerId);
+    transportState.sfuPeerIds = sfuNext;
+
+    const txNext = new Map(transportState.pendingTransmissions);
+    txNext.delete(peerId);
+    transportState.pendingTransmissions = txNext;
+
+    if (transportState.watchingTransmissionPeerId === peerId) {
+      transportState.watchingTransmissionPeerId = null;
+      transportState.watchingTransmissionProducerId = null;
+    }
+  }
+
+  transportState.callPeerIds = next;
+}
+
+function _handleRoomName(name: string): void {
+  const trimmed = name.trim().slice(0, 64);
+  if (trimmed.length > 0) transportState.roomName = trimmed;
+}
+
+function _handleChatMessage(wire: WireChatMessage): void {
+  if (!transportState.roomCode) return;
+
+  lamportReceive(wire.lamport);
+
+  const msg = wireToMessage(wire, transportState.roomCode);
+
+  putMessage(msg).catch(() => {});
+  setWatermark(msg.roomCode, msg.senderId, msg.lamport).catch(() => {});
+  refreshUnreadCount(msg.roomCode).catch(() => {});
+
+  if (!transportState.messages.some((m) => m.id === msg.id)) {
+    transportState.messages = [...transportState.messages, msg].sort((a, b) =>
+      a.lamport !== b.lamport
+        ? a.lamport - b.lamport
+        : a.senderId.localeCompare(b.senderId)
+    );
+  }
+}
+
+// ── Transport events ──────────────────────────────────────────────────────────
 
 _transport.on("connect", (peerId) => {
   transportState.peers = _transport.peers();
-  _broadcastProfile();
+  _broadcastProfile().catch(() => {});
   _sendRoomName(peerId);
-  if (transportState.inCall) {
-    _sendCallPresence(peerId);
-  }
-
-  const myId = _transport.selfId();
-  const host = selectSyncHost(_transport.peers(), myId);
-  if (host !== myId) {
-    _sendSyncRequest(host).catch(() => {});
-  }
+  if (transportState.inCall) _sendCallPresence(peerId);
+  _sendDigest(peerId).catch(() => {});
 });
 
 _transport.on("disconnect", (peerId) => {
   transportState.peers = _transport.peers();
+
   const parts = new Map(transportState.participants);
   parts.delete(peerId);
   transportState.participants = parts;
+
   const calls = new Set(transportState.callPeerIds);
   calls.delete(peerId);
   transportState.callPeerIds = calls;
+
   const did = _peerIdToDid.get(peerId);
   if (did) {
     const names = new Map(transportState.peerNames);
@@ -353,13 +416,15 @@ _transport.on("disconnect", (peerId) => {
     transportState.peerAvatars = avatars;
     _peerIdToDid.delete(peerId);
   }
-  // Clean up SFU tracking and any pending transmission
+
   const sfuNext = new Set(transportState.sfuPeerIds);
   sfuNext.delete(peerId);
   transportState.sfuPeerIds = sfuNext;
+
   const txNext = new Map(transportState.pendingTransmissions);
   txNext.delete(peerId);
   transportState.pendingTransmissions = txNext;
+
   if (transportState.watchingTransmissionPeerId === peerId) {
     transportState.watchingTransmissionPeerId = null;
     transportState.watchingTransmissionProducerId = null;
@@ -368,146 +433,41 @@ _transport.on("disconnect", (peerId) => {
 
 _transport.on("message", (peerId, data) => {
   try {
-    const envelope = decode(data) as { kind: string; [k: string]: unknown };
+    const msg = decode(data) as AnyWireMessage;
 
-    if (envelope.kind === "profile" && typeof envelope.name === "string") {
-      const did = typeof envelope.did === "string" ? envelope.did : peerId;
-      _peerIdToDid.set(peerId, did);
-      const avatarUrl = normalizeAvatarUrl(envelope.avatarUrl);
-      const names = new Map(transportState.peerNames);
-      names.set(did, envelope.name);
-      transportState.peerNames = names;
-      const avatars = new Map(transportState.peerAvatars);
-      if (avatarUrl) {
-        avatars.set(did, avatarUrl);
-      } else {
-        avatars.delete(did);
-      }
-      transportState.peerAvatars = avatars;
-      getPeerProfile(did)
-        .then((existing) => {
-          putPeerProfile({
-            did,
-            isMe: false,
-            nickname: envelope.name as string,
-            pfpURL: avatarUrl,
-            updatedAt: Date.now(),
-            ...(existing?.pfpData ? { pfpData: existing.pfpData } : {}),
-          }).catch(() => {});
-        })
-        .catch(() => {});
-      return;
-    }
-
-    if (envelope.kind === "call-presence") {
-      const inCall = envelope.inCall === true;
-      const next = new Set(transportState.callPeerIds);
-      if (inCall) {
-        next.add(peerId);
-      } else {
-        next.delete(peerId);
-
-        // Peer left call: remove stale participant/media/transmission state.
-        const parts = new Map(transportState.participants);
-        parts.delete(peerId);
-        transportState.participants = parts;
-
-        const sfuNext = new Set(transportState.sfuPeerIds);
-        sfuNext.delete(peerId);
-        transportState.sfuPeerIds = sfuNext;
-
-        const txNext = new Map(transportState.pendingTransmissions);
-        txNext.delete(peerId);
-        transportState.pendingTransmissions = txNext;
-
-        if (transportState.watchingTransmissionPeerId === peerId) {
-          transportState.watchingTransmissionPeerId = null;
-          transportState.watchingTransmissionProducerId = null;
-        }
-      }
-      transportState.callPeerIds = next;
-      return;
-    }
-
-    if (envelope.kind === "room-name" && typeof envelope.name === "string") {
-      const name = envelope.name.trim().slice(0, 64);
-      if (name.length > 0) {
-        transportState.roomName = name;
-      }
-      return;
-    }
-
-    if (envelope.kind === "wire") {
-      const type = envelope.type as MessageType;
-
-      if (type === MessageType.SyncRequest) {
-        _handleSyncRequest(
-          peerId,
-          (envelope.watermarks as Record<string, number>) ?? {}
-        );
-        return;
-      }
-
-      if (type === MessageType.SyncOffer) {
-        return;
-      }
-
-      if (type === MessageType.SyncBatch) {
-        _handleSyncBatch((envelope.messages as Message[]) ?? []);
-        return;
-      }
-
-      if (type === MessageType.SyncComplete) {
+    switch (msg.type) {
+      case MessageType.Profile:
+        _handleProfile(peerId, msg);
+        break;
+      case MessageType.CallPresence:
+        _handleCallPresence(peerId, msg.inCall);
+        break;
+      case MessageType.RoomName:
+        _handleRoomName(msg.name);
+        break;
+      case MessageType.SyncDigest:
+        _handleDigest(peerId, msg.watermarks).catch(() => {});
+        break;
+      case MessageType.SyncRequest:
+        _handleSyncRequest(peerId, msg.watermarks).catch(() => {});
+        break;
+      case MessageType.SyncBatch:
+        _handleSyncBatch(msg.messages).catch(() => {});
+        break;
+      case MessageType.SyncComplete:
         _handleSyncComplete(peerId);
-        return;
-      }
-
-      if (
-        type === MessageType.Text ||
-        type === MessageType.Reply ||
-        type === MessageType.Reaction
-      ) {
-        const wire = envelope as unknown as WireMessage;
-        if (!transportState.roomCode) return;
-
-        lamportReceive(wire.lamport);
-
-        const msg: Message = {
-          id: wire.id,
-          roomCode: transportState.roomCode,
-          senderId: wire.senderId,
-          senderName: wire.senderName,
-          senderDid: wire.senderDid,
-          sig: wire.sig,
-          timestamp: wire.timestamp,
-          lamport: wire.lamport,
-          type: wire.type,
-          content: wire.content,
-          meta: wire.meta,
-          attachments: [],
-          replyTo: wire.replyTo,
-          reactionTo: wire.reactionTo,
-          reactionEmoji: wire.reactionEmoji,
-          reactionOp: wire.reactionOp,
-        };
-
-        putMessage(msg).catch(() => {});
-        setWatermark(msg.roomCode, msg.senderId, msg.lamport).catch(() => {});
-        refreshUnreadCount(msg.roomCode).catch(() => {});
-        if (!transportState.messages.some((m) => m.id === msg.id)) {
-          transportState.messages = [...transportState.messages, msg].sort(
-            (a, b) =>
-              a.lamport !== b.lamport
-                ? a.lamport - b.lamport
-                : a.senderId.localeCompare(b.senderId)
-          );
-        }
-      }
+        break;
+      case MessageType.Text:
+      case MessageType.Reply:
+      case MessageType.Reaction:
+      case MessageType.File:
+        _handleChatMessage(msg);
+        break;
     }
   } catch {}
 });
 
-// ── Voice handlers ───────────────────────────────────────────────────────────
+// ── Voice events ──────────────────────────────────────────────────────────────
 
 _voice.on("trackAdded", (peerId, track) => {
   const existing = transportState.participants.get(peerId) ?? {
@@ -519,7 +479,10 @@ _voice.on("trackAdded", (peerId, track) => {
   };
   transportState.participants = new Map(transportState.participants).set(
     peerId,
-    { ...existing, audioTrack: track }
+    {
+      ...existing,
+      audioTrack: track,
+    }
   );
 });
 
@@ -528,7 +491,10 @@ _voice.on("trackRemoved", (peerId) => {
   if (!p) return;
   transportState.participants = new Map(transportState.participants).set(
     peerId,
-    { ...p, audioTrack: null }
+    {
+      ...p,
+      audioTrack: null,
+    }
   );
 });
 
@@ -537,7 +503,10 @@ _voice.on("peerLeft", (peerId) => {
   if (!p) return;
   transportState.participants = new Map(transportState.participants).set(
     peerId,
-    { ...p, audioTrack: null }
+    {
+      ...p,
+      audioTrack: null,
+    }
   );
 });
 
@@ -545,7 +514,7 @@ _voice.on("error", (err) => {
   transportState.error = err.message;
 });
 
-// ── Video handlers ───────────────────────────────────────────────────────────
+// ── Video events ──────────────────────────────────────────────────────────────
 
 _video.on("trackAdded", (peerId, track, source) => {
   const existing = transportState.participants.get(peerId) ?? {
@@ -563,7 +532,6 @@ _video.on("trackAdded", (peerId, track, source) => {
         ? { ...existing, screenAudioTrack: track }
         : { ...existing, screenTrack: track }
   );
-  // When any track is added, the peer is confirmed in the SFU room
   if (!transportState.sfuPeerIds.has(peerId)) {
     transportState.sfuPeerIds = new Set([...transportState.sfuPeerIds, peerId]);
   }
@@ -581,7 +549,6 @@ _video.on("trackRemoved", (peerId, source) => {
 });
 
 _video.on("peerJoined", (peerId) => {
-  // Peer is now active in the SFU room
   if (!transportState.sfuPeerIds.has(peerId)) {
     transportState.sfuPeerIds = new Set([...transportState.sfuPeerIds, peerId]);
   }
@@ -592,15 +559,22 @@ _video.on("peerLeft", (peerId) => {
   if (p) {
     transportState.participants = new Map(transportState.participants).set(
       peerId,
-      { ...p, videoTrack: null, screenTrack: null, screenAudioTrack: null }
+      {
+        ...p,
+        videoTrack: null,
+        screenTrack: null,
+        screenAudioTrack: null,
+      }
     );
   }
   const next = new Set(transportState.sfuPeerIds);
   next.delete(peerId);
   transportState.sfuPeerIds = next;
+
   const tx = new Map(transportState.pendingTransmissions);
   tx.delete(peerId);
   transportState.pendingTransmissions = tx;
+
   if (transportState.watchingTransmissionPeerId === peerId) {
     transportState.watchingTransmissionPeerId = null;
     transportState.watchingTransmissionProducerId = null;
@@ -608,19 +582,18 @@ _video.on("peerLeft", (peerId) => {
 });
 
 _video.on("transmissionAvailable", (peerId, producerId) => {
-  // Record as pending — the peer is also now known to be in the SFU room
-  transportState.pendingTransmissions = new Map(transportState.pendingTransmissions).set(peerId, producerId);
+  transportState.pendingTransmissions = new Map(
+    transportState.pendingTransmissions
+  ).set(peerId, producerId);
   if (!transportState.sfuPeerIds.has(peerId)) {
     transportState.sfuPeerIds = new Set([...transportState.sfuPeerIds, peerId]);
   }
 });
 
 _video.on("transmissionEnded", (peerId) => {
-  // Remove from pending
   const next = new Map(transportState.pendingTransmissions);
   next.delete(peerId);
   transportState.pendingTransmissions = next;
-  // If we were watching this peer, clear that state
   if (transportState.watchingTransmissionPeerId === peerId) {
     transportState.watchingTransmissionPeerId = null;
     transportState.watchingTransmissionProducerId = null;
@@ -631,7 +604,7 @@ _video.on("error", (err) => {
   transportState.error = err.message;
 });
 
-// ── Public API ───────────────────────────────────────────────────────────────
+// ── Public API ────────────────────────────────────────────────────────────────
 
 export async function joinRoom(roomCode: string): Promise<void> {
   transportState.error = null;
@@ -652,11 +625,6 @@ export async function joinRoom(roomCode: string): Promise<void> {
 export function leaveRoom(): void {
   leaveCall();
   _transport.disconnect();
-  if (_syncTimeoutId) {
-    clearTimeout(_syncTimeoutId);
-    _syncTimeoutId = null;
-  }
-  _pendingSyncPeer = null;
   _peerIdToDid.clear();
   transportState.connected = false;
   transportState.roomCode = null;
@@ -676,7 +644,7 @@ export function leaveRoom(): void {
 
 interface SendMessageOptions {
   replyTo?: Message["replyTo"];
-  type?: MessageType;
+  type?: ChatMessageType;
   reactionTo?: string;
   reactionEmoji?: string;
   reactionOp?: "add" | "remove";
@@ -709,21 +677,7 @@ export async function sendMessage(
     reactionOp: options.reactionOp,
   };
 
-  const wire: WireMessage = {
-    id: msg.id,
-    senderId: msg.senderId,
-    senderName: msg.senderName,
-    timestamp: msg.timestamp,
-    lamport: msg.lamport,
-    type: msg.type,
-    content: msg.content,
-    replyTo: msg.replyTo,
-    reactionTo: msg.reactionTo,
-    reactionEmoji: msg.reactionEmoji,
-    reactionOp: msg.reactionOp,
-  };
-
-  _transport.broadcast(encode({ kind: "wire", ...wire }));
+  _transport.broadcast(encode(messageToWire(msg)));
 
   await putMessage(msg);
   await setWatermark(msg.roomCode, msg.senderId, msg.lamport);
@@ -738,9 +692,10 @@ export async function sendMessage(
 }
 
 export async function sendReply(text: string, target: Message): Promise<void> {
-  const snapshot = target.content.length > 160
-    ? `${target.content.slice(0, 157)}...`
-    : target.content;
+  const snapshot =
+    target.content.length > 160
+      ? `${target.content.slice(0, 157)}...`
+      : target.content;
   await sendMessage(text, {
     type: MessageType.Reply,
     replyTo: {
@@ -751,9 +706,17 @@ export async function sendReply(text: string, target: Message): Promise<void> {
   });
 }
 
-export async function toggleReaction(messageId: string, emoji: string): Promise<void> {
+export async function toggleReaction(
+  messageId: string,
+  emoji: string
+): Promise<void> {
   const existing = transportState.messages
-    .filter((m) => m.type === MessageType.Reaction && m.reactionTo === messageId && m.reactionEmoji === emoji)
+    .filter(
+      (m) =>
+        m.type === MessageType.Reaction &&
+        m.reactionTo === messageId &&
+        m.reactionEmoji === emoji
+    )
     .sort((a, b) => b.lamport - a.lamport)
     .find((m) => m.senderId === (identityStore.did ?? _transport.selfId()));
 
@@ -816,6 +779,8 @@ export function peerIdToDid(peerId: string): string {
   return _peerIdToDid.get(peerId) ?? peerId;
 }
 
+// ── Call ──────────────────────────────────────────────────────────────────────
+
 export async function joinCall(): Promise<void> {
   transportState.error = null;
   try {
@@ -865,11 +830,8 @@ export function leaveCall(): void {
 }
 
 export function toggleMute(): void {
-  if (_voice.isMuted()) {
-    _voice.unmute();
-  } else {
-    _voice.mute();
-  }
+  if (_voice.isMuted()) _voice.unmute();
+  else _voice.mute();
   transportState.muted = _voice.isMuted();
 }
 
@@ -886,8 +848,6 @@ export async function startCamera(): Promise<void> {
     });
     transportState.localCameraStream = stream;
     transportState.cameraOff = false;
-    // Pass the already-acquired stream so mediasoup publishes the same tracks
-    // without triggering a second getUserMedia permission prompt.
     await _video.startCamera(stream);
   } catch (err) {
     transportState.error = err instanceof Error ? err.message : String(err);
@@ -903,11 +863,8 @@ export function stopCamera(): void {
 }
 
 export async function toggleCamera(): Promise<void> {
-  if (transportState.cameraOff) {
-    await startCamera();
-  } else {
-    stopCamera();
-  }
+  if (transportState.cameraOff) await startCamera();
+  else stopCamera();
 }
 
 export async function startScreenShare(): Promise<void> {
@@ -920,8 +877,6 @@ export async function startScreenShare(): Promise<void> {
     transportState.localScreenStream = stream;
     transportState.screenSharing = true;
     stream.getVideoTracks()[0].onended = () => stopScreenShare();
-    // Pass the already-acquired stream so mediasoup publishes the same tracks
-    // without triggering a second getDisplayMedia permission prompt.
     await _video.startScreenShare(stream);
   } catch (err) {
     transportState.error = err instanceof Error ? err.message : String(err);
@@ -939,18 +894,19 @@ export function stopScreenShare(): void {
 export function pauseVideo(source: VideoSource): void {
   _video.pauseVideo(source);
 }
-
 export function resumeVideo(source: VideoSource): void {
   _video.resumeVideo(source);
 }
 
-export async function watchTransmission(peerId: string, producerId: string): Promise<void> {
+export async function watchTransmission(
+  peerId: string,
+  producerId: string
+): Promise<void> {
   transportState.error = null;
   try {
     await _video.watchTransmission(peerId, producerId);
     transportState.watchingTransmissionPeerId = peerId;
     transportState.watchingTransmissionProducerId = producerId;
-    // Remove from pending (mediasoup.ts deletes it too, but keep in sync)
     const next = new Map(transportState.pendingTransmissions);
     next.delete(peerId);
     transportState.pendingTransmissions = next;
@@ -965,13 +921,14 @@ export function stopWatchingTransmission(): void {
   const producerId = transportState.watchingTransmissionProducerId;
   if (!peerId || !producerId) return;
   _video.stopWatchingTransmission(peerId);
-  // Restore the "Click to watch" tile — the remote peer is still producing
-  transportState.pendingTransmissions = new Map(transportState.pendingTransmissions).set(peerId, producerId);
+  transportState.pendingTransmissions = new Map(
+    transportState.pendingTransmissions
+  ).set(peerId, producerId);
   transportState.watchingTransmissionPeerId = null;
   transportState.watchingTransmissionProducerId = null;
 }
 
-// ── Voice device / gain controls ─────────────────────────────────────────────
+// ── Voice device / gain controls ──────────────────────────────────────────────
 
 export async function setVoiceInputDevice(deviceId: string): Promise<void> {
   await _voice.setInputDevice(deviceId);
@@ -989,7 +946,6 @@ export function getVoiceActiveInputDevice(): string | null {
 export function setVoiceInputGain(gain: number): void {
   _voice.setInputGain(gain);
 }
-
 export function getVoiceInputGain(): number {
   return _voice.getInputGain();
 }
@@ -1008,12 +964,8 @@ export function getVoiceActiveOutputDevice(): string | null {
 
 export function setVoiceOutputVolume(volume: number): void {
   const next = Math.max(0, volume);
-  if (transportState.deafened) {
-    _voiceOutputBeforeDeafen = next;
-    return;
-  }
   _voiceOutputBeforeDeafen = next;
-  _voice.setOutputVolume(next);
+  if (!transportState.deafened) _voice.setOutputVolume(next);
 }
 
 export function getVoiceOutputVolume(): number {
@@ -1022,12 +974,8 @@ export function getVoiceOutputVolume(): number {
 
 export function setTransmissionOutputVolume(volume: number): void {
   const next = Math.max(0, volume);
-  if (transportState.deafened) {
-    _videoOutputBeforeDeafen = next;
-    return;
-  }
   _videoOutputBeforeDeafen = next;
-  _video.setOutputVolume(next);
+  if (!transportState.deafened) _video.setOutputVolume(next);
 }
 
 export function getTransmissionOutputVolume(): number {
@@ -1041,11 +989,11 @@ export function setDeafened(deafened: boolean): void {
     _voice.setOutputVolume(0);
     _video.setOutputVolume(0);
     transportState.deafened = true;
-    return;
+  } else {
+    _voice.setOutputVolume(_voiceOutputBeforeDeafen);
+    _video.setOutputVolume(_videoOutputBeforeDeafen);
+    transportState.deafened = false;
   }
-  _voice.setOutputVolume(_voiceOutputBeforeDeafen);
-  _video.setOutputVolume(_videoOutputBeforeDeafen);
-  transportState.deafened = false;
 }
 
 export function toggleDeafen(): void {
