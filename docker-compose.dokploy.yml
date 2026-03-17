@@ -22,16 +22,16 @@ services:
     # 500 ports supports ~250 concurrent peers (1 send + 1 recv transport each).
     # These ports must be open in the host firewall.
     ports:
-      - "40000-40499:40000-40499/udp"
-      - "40000-40499:40000-40499/tcp"
+      - ${PORTS_UDP:-40000-40499:40000-40499/udp}
+      - ${PORTS_TCP:-40000-40499:40000-40499/tcp}
     environment:
       NODE_ENV: production
       SFU_PORT: "3000"
       # REQUIRED: set to the host's public IP so browsers can reach the RTC ports above.
       # In dokploy, add ANNOUNCED_IP as an environment variable in the service settings.
       ANNOUNCED_IP: ${ANNOUNCED_IP:?ANNOUNCED_IP must be set to the server public IP}
-      RTC_MIN_PORT: "40000"
-      RTC_MAX_PORT: "40499"
+      RTC_MIN_PORT: ${RTC_MIN:-40000}
+      RTC_MAX_PORT: ${RTC_MAX:-40499}
     networks:
       - dokploy-network
 
@@ -48,11 +48,11 @@ services:
       - dokploy-network
     labels:
       - traefik.enable=true
-      - traefik.http.routers.awful-http.rule=Host(`awful.frav.in`)
+      - traefik.http.routers.awful-http.rule=Host(`${DOMAIN}`)
       - traefik.http.routers.awful-http.entrypoints=web
       - traefik.http.routers.awful-http.middlewares=awful-redirect
       - traefik.http.middlewares.awful-redirect.redirectscheme.scheme=https
-      - traefik.http.routers.awful-https.rule=Host(`awful.frav.in`)
+      - traefik.http.routers.awful-https.rule=Host(`${DOMAIN}`)
       - traefik.http.routers.awful-https.entrypoints=websecure
       - traefik.http.routers.awful-https.tls=true
       - traefik.http.routers.awful-https.tls.certresolver=letsencrypt
