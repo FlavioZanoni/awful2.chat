@@ -12,10 +12,14 @@
     Maximize,
     Minimize,
     Radio,
+    Volume2,
+    Volume1,
+    VolumeX,
   } from "@lucide/svelte";
   import { MonitorIcon } from "@lucide/svelte";
-  import { Button } from "$lib/components/ui/button";
   import { profileStore, loadProfile } from "$lib/profile.svelte";
+  import { cn } from "$lib/utils";
+  import { Slider } from "./ui/slider";
 
   $effect(() => {
     loadProfile();
@@ -63,8 +67,8 @@
     onStopScreenShare: () => void;
     onWatchTransmission?: (peerId: string, producerId: string) => void;
     onStopWatchingTransmission?: () => void;
+    setTransmissionOutputVolume?: (volume: number) => void;
     transmissionOutputVolume?: number;
-    onTransmissionOutputVolumeChange?: (volume: number) => void;
     error?: string | null;
   }
 
@@ -92,15 +96,12 @@
     onStopScreenShare,
     onWatchTransmission,
     onStopWatchingTransmission,
+    setTransmissionOutputVolume,
     transmissionOutputVolume = 1,
-    onTransmissionOutputVolumeChange,
     error = null,
   }: Props = $props();
 
-  // ── Active speaker detection ──────────────────────────────────────────────
-
   let speakingPeers = $state(new Set<string>());
-
   const analysers = new Map<
     string,
     {
@@ -373,13 +374,26 @@
   let hoveringControls = $state(false);
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function startHideTimer(delay: number) {
-    if (!isFullscreen && !hasActiveVideo) return;
-    controlsVisible = true;
-    if (hideTimer) clearTimeout(hideTimer);
+  // Docked only when there is nothing to watch — pure audio call
+  const dockedControls = $derived(!hasActiveVideo && !isWatchingTransmission);
+
+  function clearTimer() {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function startHideTimer() {
+    clearTimer();
     hideTimer = setTimeout(() => {
       if (!hoveringControls) controlsVisible = false;
-    }, delay);
+    }, 1600);
+  }
+
+  function showControls() {
+    controlsVisible = true;
+    clearTimer();
   }
 
   $effect(() => {
@@ -395,22 +409,29 @@
   $effect(() => {
     const el = panelEl;
     if (!el) return;
-    if (!isFullscreen && !hasActiveVideo) {
-      controlsVisible = true;
-      if (hideTimer) clearTimeout(hideTimer);
+
+    if (dockedControls) {
+      showControls();
       return;
     }
-    const onEnter = () => startHideTimer(3000);
-    const onLeave = () => startHideTimer(120);
-    const onMove = () => startHideTimer(isFullscreen ? 3000 : 120);
-    el.addEventListener("mouseenter", onEnter);
-    el.addEventListener("mouseleave", onLeave);
+
+    const onMove = () => {
+      showControls();
+      startHideTimer();
+    };
+    const onLeave = () => {
+      controlsVisible = false;
+      clearTimer();
+    };
+
     el.addEventListener("mousemove", onMove);
+    el.addEventListener("mouseleave", onLeave);
+    startHideTimer();
+
     return () => {
-      el.removeEventListener("mouseenter", onEnter);
-      el.removeEventListener("mouseleave", onLeave);
       el.removeEventListener("mousemove", onMove);
-      if (hideTimer) clearTimeout(hideTimer);
+      el.removeEventListener("mouseleave", onLeave);
+      clearTimer();
     };
   });
 
@@ -418,9 +439,7 @@
     if (!panelEl) return;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else panelEl.requestFullscreen().catch(() => {});
-  }
-
-  // ── Visibility conditions ─────────────────────────────────────────────────
+  } // ── Visibility conditions ─────────────────────────────────────────────────
 
   const nobodyInCall = $derived(callPeerIds.size === 0 && !inCall);
   const othersInCallNotUs = $derived(callPeerIds.size > 0 && !inCall);
@@ -556,15 +575,14 @@
       </div>
     </div>
     <div class="absolute bottom-3 left-1/2 -translate-x-1/2">
-      <Button
-        variant="secondary"
-        size="sm"
+      <button
+        type="button"
         onclick={onJoinCall}
-        class="gap-1.5 cursor-pointer font-mono text-xs"
+        class="group relative flex items-center gap-2 rounded-xl bg-linear-to-br from-emerald-600 to-emerald-700 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/30 transition-all duration-200 hover:from-emerald-400 hover:to-emerald-500 hover:scale-105 hover:shadow-emerald-500/50"
       >
-        <Phone class="size-3.5" />
+        <Phone class="size-4" />
         Join Call
-      </Button>
+      </button>
     </div>
   </div>
 {:else if inCall}
@@ -637,114 +655,147 @@
     <div
       role="group"
       aria-label="Call controls"
-      class="flex items-center justify-center gap-2 transition-all duration-300 absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-4 py-1 backdrop-blur-sm z-10
-        {isFullscreen && !controlsVisible
-        ? 'translate-y-[calc(100%+2rem)] opacity-0 pointer-events-none'
-        : ''}
-        {!isFullscreen && hasActiveVideo && !controlsVisible
-        ? 'opacity-0 pointer-events-none'
+      class="flex items-center gap-4 transition-all duration-300 absolute bottom-4 left-1/2 -translate-x-1/2 z-10
+    {!dockedControls && !controlsVisible
+        ? 'opacity-0 pointer-events-none translate-y-4'
         : ''}"
       onmouseenter={() => {
         hoveringControls = true;
-        controlsVisible = true;
-        if (hideTimer) clearTimeout(hideTimer);
+        showControls();
       }}
       onmouseleave={() => {
         hoveringControls = false;
-        startHideTimer(isFullscreen ? 3000 : 120);
+        if (!dockedControls) startHideTimer();
       }}
     >
-      <Button
-        variant={muted ? "destructive" : "secondary"}
-        size="icon"
-        class="size-11 sm:size-8 cursor-pointer"
-        onclick={onToggleMute}
-        aria-label={muted ? "Unmute microphone" : "Mute microphone"}
+      <div
+        class={cn(
+          "flex gap-2",
+          !dockedControls && "p-3 py-2 bg-zinc-900 rounded-xl"
+        )}
       >
-        {#if muted}<MicOff class="size-4 sm:size-3.5" />{:else}<Mic
-            class="size-4 sm:size-3.5"
-          />{/if}
-      </Button>
-
-      <Button
-        variant={cameraOff ? "secondary" : "destructive"}
-        size="icon"
-        class="size-11 sm:size-8 cursor-pointer"
-        onclick={onToggleCamera}
-        aria-label={cameraOff ? "Turn on camera" : "Turn off camera"}
-      >
-        {#if cameraOff}<Camera class="size-4 sm:size-3.5" />{:else}<CameraOff
-            class="size-4 sm:size-3.5"
-          />{/if}
-      </Button>
-
-      <Button
-        variant={screenSharing ? "destructive" : "secondary"}
-        size="icon"
-        class="size-11 sm:size-8 hidden sm:inline-flex cursor-pointer"
-        onclick={screenSharing ? onStopScreenShare : onStartScreenShare}
-        aria-label={screenSharing
-          ? "Stop transmission"
-          : "Start transmission (screen share)"}
-        title={screenSharing ? "Stop transmission" : "Start transmission"}
-      >
-        {#if screenSharing}<MonitorOff
-            class="size-4 sm:size-3.5"
-          />{:else}<Monitor class="size-4 sm:size-3.5" />{/if}
-      </Button>
-
-      {#if isWatchingTransmission}
-        <Button
-          variant="destructive"
-          size="icon"
-          class="size-11 sm:size-8 cursor-pointer"
-          onclick={onStopWatchingTransmission}
-          aria-label="Stop watching transmission"
-          title="Stop watching transmission"
+        <button
+          type="button"
+          onclick={onToggleMute}
+          aria-label={muted ? "Unmute microphone" : "Mute microphone"}
+          class="group relative flex h-10 w-10 items-center justify-center rounded-lg transition-all duration-200
+          {muted
+            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
+            : 'bg-white/10 text-zinc-100 hover:bg-white/20 hover:scale-105'}"
         >
-          <Radio class="size-4 sm:size-3.5" />
-        </Button>
+          {#if muted}
+            <MicOff class="size-4" />
+          {:else}
+            <Mic class="size-4" />
+          {/if}
+        </button>
+        <button
+          type="button"
+          onclick={onToggleCamera}
+          aria-label={cameraOff ? "Turn on camera" : "Turn off camera"}
+          class="group relative flex h-10 w-10 items-center justify-center rounded-lg transition-all duration-200
+            {!cameraOff
+            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
+            : 'bg-white/10 text-zinc-100 hover:bg-white/20 hover:scale-105'}"
+        >
+          {#if cameraOff}
+            <Camera class="size-4" />
+          {:else}
+            <CameraOff class="size-4" />
+          {/if}
+        </button>
 
-        <div class="flex items-center gap-2 px-2">
-          <input
-            type="range"
-            min="0"
-            max="2"
-            step="0.05"
-            value={transmissionOutputVolume}
-            oninput={(e) =>
-              onTransmissionOutputVolumeChange?.(
-                Number((e.currentTarget as HTMLInputElement).value)
-              )}
-            class="w-16 sm:w-24 accent-primary"
-            aria-label="Transmission volume"
-            title="Transmission volume"
-          />
-        </div>
-      {/if}
+        <button
+          type="button"
+          onclick={screenSharing ? onStopScreenShare : onStartScreenShare}
+          aria-label={screenSharing
+            ? "Stop transmission"
+            : "Start transmission"}
+          title={screenSharing ? "Stop transmission" : "Start transmission"}
+          class="hidden sm:flex group relative h-10 w-10 items-center justify-center rounded-lg transition-all duration-200
+            {screenSharing
+            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
+            : 'bg-white/10 text-zinc-100 hover:bg-white/20 hover:scale-105'}"
+        >
+          {#if screenSharing}
+            <MonitorOff class="size-4" />
+          {:else}
+            <Monitor class="size-4" />
+          {/if}
+        </button>
+      </div>
 
-      <Button
-        variant="destructive"
-        size="icon"
-        class="size-11 sm:size-8 cursor-pointer"
+      <button
+        type="button"
         onclick={onLeaveCall}
         aria-label="Leave call"
+        class={cn(
+          "group relative flex w-16 h-10 items-center justify-center rounded-lg bg-linear-to-br from-red-500 to-red-600 text-white shadow-lg shadow-red-500/30 transition-all duration-200 hover:from-red-400 hover:to-red-500 hover:scale-105 hover:shadow-red-500/50",
+          !dockedControls && "h-12 px-6 w-20"
+        )}
       >
-        <PhoneOff class="size-4 sm:size-3.5" />
-      </Button>
-
-      <Button
-        variant="secondary"
-        size="icon"
-        class="size-11 sm:size-8 hidden sm:inline-flex cursor-pointer"
-        onclick={toggleFullscreen}
-        aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-        title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-      >
-        {#if isFullscreen}<Minimize
-            class="size-4 sm:size-3.5"
-          />{:else}<Maximize class="size-4 sm:size-3.5" />{/if}
-      </Button>
+        <PhoneOff class="size-5" />
+      </button>
+      <!-- Transmission controls -->
+      {#if isWatchingTransmission}
+        <div class="flex items-center gap-2 p-3 py-2 bg-zinc-900 rounded-xl">
+          <button
+            type="button"
+            onclick={onStopWatchingTransmission}
+            aria-label="Stop watching transmission"
+            title="Stop watching transmission"
+            class="flex h-10 w-10 items-center justify-center rounded-lg bg-red-500/20 text-red-400 transition-all duration-200 hover:bg-red-500/30 ring-1 ring-red-500/50"
+          >
+            <Radio class="size-4" />
+          </button>
+          <div class="flex items-center gap-2 px-1">
+            <button
+              type="button"
+              onclick={() =>
+                setTransmissionOutputVolume?.(
+                  transmissionOutputVolume === 0 ? 1 : 0
+                )}
+              aria-label={transmissionOutputVolume === 0
+                ? "Unmute transmission"
+                : "Mute transmission"}
+              class="flex items-center justify-center text-zinc-400 hover:text-zinc-100 transition-colors"
+            >
+              {#if transmissionOutputVolume === 0}
+                <VolumeX class="size-4 shrink-0" />
+              {:else if transmissionOutputVolume < 1}
+                <Volume1 class="size-4 shrink-0" />
+              {:else}
+                <Volume2 class="size-4 shrink-0" />
+              {/if}
+            </button>
+            <Slider
+              type="single"
+              min={0}
+              max={2}
+              step={0.05}
+              value={transmissionOutputVolume}
+              onValueChange={(v: number) => {
+                setTransmissionOutputVolume?.(v);
+              }}
+              class="w-24"
+            />
+          </div>
+        </div>
+      {/if}
     </div>
+
+    <button
+      type="button"
+      onclick={toggleFullscreen}
+      aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+      title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+      class="absolute right-3 top-1/2 -translate-y-1/2 sm:right-4 sm:top-auto sm:bottom-4 sm:translate-y-0 flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-lg bg-zinc-900 text-zinc-300 transition-all duration-200 hover:bg-zinc-900 hover:scale-105 z-20"
+    >
+      {#if isFullscreen}
+        <Minimize class="size-4" />
+      {:else}
+        <Maximize class="size-4" />
+      {/if}
+    </button>
   </div>
 {/if}

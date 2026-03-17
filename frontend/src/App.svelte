@@ -66,6 +66,7 @@
   let lockedView = $state<"unlock" | "restore">("unlock");
   let sidebarOpen = $state(false);
   let joinError = $state<string | null>(null);
+  let transmissionOutputVolume = $state(getTransmissionOutputVolume());
 
   async function handleCreate(): Promise<string> {
     return Array.from(crypto.getRandomValues(new Uint8Array(3)))
@@ -219,8 +220,8 @@
             watchingTransmissionPeerId={transportState.watchingTransmissionPeerId}
             onWatchTransmission={watchTransmission}
             onStopWatchingTransmission={stopWatchingTransmission}
-            transmissionOutputVolume={getTransmissionOutputVolume()}
-            onTransmissionOutputVolumeChange={setTransmissionOutputVolume}
+            transmissionOutputVolume={transmissionOutputVolume}
+            {setTransmissionOutputVolume}
           />
         {:else}
           <RoomCreateJoin
