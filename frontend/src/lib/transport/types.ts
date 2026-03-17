@@ -115,6 +115,10 @@ export interface VideoEvents {
   transmissionEnded: (peerId: string) => void;
   /** Fired when output volume changes (0.0 to 1.0). */
   outputVolumeChanged: (volume: number) => void;
+  /** Fired when someone starts watching your screen share transmission. */
+  transmissionWatched: (peerId: string) => void;
+  /** Fired when someone stops watching your screen share transmission. */
+  transmissionWatchEnded: (peerId: string) => void;
   error: (err: Error) => void;
 }
 

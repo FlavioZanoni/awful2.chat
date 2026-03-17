@@ -76,6 +76,24 @@ interface MSProducerClosed {
   producerId: string;
   source: "camera" | "screen";
 }
+interface MSProducerConsumed {
+  type: "ms:producer-consumed";
+  peerId: string;
+  producerId: string;
+}
+interface MSProducerConsumerClosed {
+  type: "ms:producer-consumer-closed";
+  peerId: string;
+  producerId: string;
+}
+interface MSCloseConsumer {
+  type: "ms:close-consumer";
+  producerId: string;
+}
+interface MSCloseProducer {
+  type: "ms:close-producer";
+  producerId: string;
+}
 interface MSPeerLeft {
   type: "ms:peer-left";
   peerId: string;
@@ -90,7 +108,9 @@ type ClientMsg =
   | MSCreateTransport
   | MSConnectTransport
   | MSProduce
-  | MSConsume;
+  | MSConsume
+  | MSCloseConsumer
+  | MSCloseProducer;
 
 // ── Per-peer state ────────────────────────────────────────────────────────────
 
@@ -100,10 +120,20 @@ interface PeerState {
   ws: WebSocket;
   sendTransport: mediasoup.types.WebRtcTransport | null;
   recvTransport: mediasoup.types.WebRtcTransport | null;
-  // producerId → { producer, source }
-  producers: Map<string, { producer: mediasoup.types.Producer; source: "camera" | "screen" }>;
-  // consumerId → consumer
-  consumers: Map<string, mediasoup.types.Consumer>;
+  // producerId → { producer, source, consumers Set }
+  producers: Map<
+    string,
+    {
+      producer: mediasoup.types.Producer;
+      source: "camera" | "screen";
+      consumers: Set<string>;
+    }
+  >;
+  // consumerId → { consumer, producerId }
+  consumers: Map<
+    string,
+    { consumer: mediasoup.types.Consumer; producerId: string }
+  >;
 }
 
 // ── Room state ────────────────────────────────────────────────────────────────
@@ -159,7 +189,9 @@ let worker: mediasoup.types.Worker;
 // One router per room for now — keyed by roomCode.
 const routers = new Map<string, mediasoup.types.Router>();
 
-async function getOrCreateRouter(roomCode: string): Promise<mediasoup.types.Router> {
+async function getOrCreateRouter(
+  roomCode: string,
+): Promise<mediasoup.types.Router> {
   if (!routers.has(roomCode)) {
     const router = await worker.createRouter({ mediaCodecs });
     routers.set(roomCode, router);
@@ -169,7 +201,7 @@ async function getOrCreateRouter(roomCode: string): Promise<mediasoup.types.Rout
 }
 
 async function createWebRtcTransport(
-  router: mediasoup.types.Router
+  router: mediasoup.types.Router,
 ): Promise<mediasoup.types.WebRtcTransport> {
   return router.createWebRtcTransport({
     listenInfos: [
@@ -195,9 +227,7 @@ async function createWebRtcTransport(
 
 // ── Message handlers ──────────────────────────────────────────────────────────
 
-async function handleGetCapabilities(
-  peer: PeerState
-): Promise<void> {
+async function handleGetCapabilities(peer: PeerState): Promise<void> {
   const router = await getOrCreateRouter(peer.roomCode);
   send(peer.ws, {
     type: "ms:capabilities",
@@ -207,7 +237,7 @@ async function handleGetCapabilities(
 
 async function handleCreateTransport(
   peer: PeerState,
-  msg: MSCreateTransport
+  msg: MSCreateTransport,
 ): Promise<void> {
   const router = await getOrCreateRouter(peer.roomCode);
   const transport = await createWebRtcTransport(router);
@@ -234,21 +264,20 @@ async function handleCreateTransport(
 
 async function handleConnectTransport(
   peer: PeerState,
-  msg: MSConnectTransport
+  msg: MSConnectTransport,
 ): Promise<void> {
   const transport =
     msg.direction === "send" ? peer.sendTransport : peer.recvTransport;
   if (!transport) {
-    console.warn(`[sfu] connect-transport: no ${msg.direction} transport for peer ${peer.peerId}`);
+    console.warn(
+      `[sfu] connect-transport: no ${msg.direction} transport for peer ${peer.peerId}`,
+    );
     return;
   }
   await transport.connect({ dtlsParameters: msg.dtlsParameters });
 }
 
-async function handleProduce(
-  peer: PeerState,
-  msg: MSProduce
-): Promise<void> {
+async function handleProduce(peer: PeerState, msg: MSProduce): Promise<void> {
   if (!peer.sendTransport) {
     console.warn(`[sfu] produce: no send transport for peer ${peer.peerId}`);
     return;
@@ -260,7 +289,11 @@ async function handleProduce(
     appData: { source: msg.source, peerId: peer.peerId },
   });
 
-  peer.producers.set(producer.id, { producer, source: msg.source });
+  peer.producers.set(producer.id, {
+    producer,
+    source: msg.source,
+    consumers: new Set(),
+  });
 
   send(peer.ws, { type: "ms:produced", producerId: producer.id } as MSProduced);
 
@@ -279,8 +312,8 @@ async function handleProduce(
     }
   }
 
-  producer.on("transportclose", () => {
-    peer.producers.delete(producer.id);
+  function notifyProducerClosed(producerId: string, source: "camera" | "screen") {
+    peer.producers.delete(producerId);
     const room = rooms.get(peer.roomCode);
     if (room) {
       for (const [otherPeerId, otherPeer] of room) {
@@ -288,36 +321,27 @@ async function handleProduce(
         send(otherPeer.ws, {
           type: "ms:producer-closed",
           peerId: peer.peerId,
-          producerId: producer.id,
-          source: msg.source,
+          producerId,
+          source,
         } as MSProducerClosed);
       }
     }
+  }
+
+  producer.on("transportclose", () => {
+    notifyProducerClosed(producer.id, producer.appData.source as "camera" | "screen");
   });
 
   producer.observer.on("close", () => {
-    peer.producers.delete(producer.id);
-    const room = rooms.get(peer.roomCode);
-    if (room) {
-      for (const [otherPeerId, otherPeer] of room) {
-        if (otherPeerId === peer.peerId) continue;
-        send(otherPeer.ws, {
-          type: "ms:producer-closed",
-          peerId: peer.peerId,
-          producerId: producer.id,
-          source: msg.source,
-        } as MSProducerClosed);
-      }
-    }
+    notifyProducerClosed(producer.id, producer.appData.source as "camera" | "screen");
   });
 
-  console.log(`[sfu] peer ${peer.peerId} produced ${producer.id} (${msg.source})`);
+  console.log(
+    `[sfu] peer ${peer.peerId} produced ${producer.id} (${msg.source})`,
+  );
 }
 
-async function handleConsume(
-  peer: PeerState,
-  msg: MSConsume
-): Promise<void> {
+async function handleConsume(peer: PeerState, msg: MSConsume): Promise<void> {
   if (!peer.recvTransport) {
     console.warn(`[sfu] consume: no recv transport for peer ${peer.peerId}`);
     return;
@@ -325,8 +349,15 @@ async function handleConsume(
 
   const router = await getOrCreateRouter(peer.roomCode);
 
-  if (!router.canConsume({ producerId: msg.producerId, rtpCapabilities: msg.rtpCapabilities })) {
-    console.warn(`[sfu] cannot consume producer ${msg.producerId} for peer ${peer.peerId}`);
+  if (
+    !router.canConsume({
+      producerId: msg.producerId,
+      rtpCapabilities: msg.rtpCapabilities,
+    })
+  ) {
+    console.warn(
+      `[sfu] cannot consume producer ${msg.producerId} for peer ${peer.peerId}`,
+    );
     return;
   }
 
@@ -336,7 +367,7 @@ async function handleConsume(
     paused: false,
   });
 
-  peer.consumers.set(consumer.id, consumer);
+  peer.consumers.set(consumer.id, { consumer, producerId: msg.producerId });
 
   // Find which peer owns this producer and what source it is
   let producerPeerId = "";
@@ -350,6 +381,18 @@ async function handleConsume(
         source = entry.source;
         break;
       }
+    }
+  }
+
+  // If this is a screen share, notify the producer owner that someone started watching
+  if (source === "screen" && producerPeerId) {
+    const producerOwner = room?.get(producerPeerId);
+    if (producerOwner) {
+      send(producerOwner.ws, {
+        type: "ms:producer-consumed",
+        peerId: peer.peerId,
+        producerId: msg.producerId,
+      } as MSProducerConsumed);
     }
   }
 
@@ -374,7 +417,71 @@ async function handleConsume(
     peer.consumers.delete(consumer.id);
   });
 
-  console.log(`[sfu] peer ${peer.peerId} consuming ${msg.producerId} (${source})`);
+  console.log(
+    `[sfu] peer ${peer.peerId} consuming ${msg.producerId} (${source})`,
+  );
+}
+
+function handleCloseConsumer(peer: PeerState, msg: MSCloseConsumer): void {
+  // Find the consumer by producerId (the map is keyed by consumer.id)
+  let entry:
+    | { consumer: mediasoup.types.Consumer; producerId: string }
+    | undefined;
+  for (const e of peer.consumers.values()) {
+    if (e.producerId === msg.producerId) {
+      entry = e;
+      break;
+    }
+  }
+  if (entry) {
+    // Notify the producer owner that this peer stopped watching
+    const room = rooms.get(peer.roomCode);
+    if (room) {
+      for (const [, p] of room) {
+        const prodEntry = p.producers.get(msg.producerId);
+        if (prodEntry && prodEntry.source === "screen") {
+          prodEntry.consumers.delete(peer.peerId);
+          send(p.ws, {
+            type: "ms:producer-consumer-closed",
+            peerId: peer.peerId,
+            producerId: msg.producerId,
+          } as MSProducerConsumerClosed);
+          break;
+        }
+      }
+    }
+    entry.consumer.close();
+    // Find and delete by producerId
+    for (const [consumerId, e] of peer.consumers) {
+      if (e.producerId === msg.producerId) {
+        peer.consumers.delete(consumerId);
+        break;
+      }
+    }
+  }
+}
+
+function handleCloseProducer(peer: PeerState, msg: MSCloseProducer): void {
+  const entry = peer.producers.get(msg.producerId);
+  if (entry) {
+    const source = entry.source;
+    entry.producer.close();
+    peer.producers.delete(msg.producerId);
+
+    // Notify all other peers that this producer is closed
+    const room = rooms.get(peer.roomCode);
+    if (room) {
+      for (const [otherPeerId, otherPeer] of room) {
+        if (otherPeerId === peer.peerId) continue;
+        send(otherPeer.ws, {
+          type: "ms:producer-closed",
+          peerId: peer.peerId,
+          producerId: msg.producerId,
+          source,
+        } as MSProducerClosed);
+      }
+    }
+  }
 }
 
 function handlePeerLeft(peer: PeerState): void {
@@ -388,7 +495,7 @@ function handlePeerLeft(peer: PeerState): void {
   peer.producers.clear();
 
   // close all consumers
-  for (const consumer of peer.consumers.values()) {
+  for (const { consumer } of peer.consumers.values()) {
     consumer.close();
   }
   peer.consumers.clear();
@@ -397,11 +504,16 @@ function handlePeerLeft(peer: PeerState): void {
   peer.recvTransport?.close();
 
   room.delete(peer.peerId);
-  console.log(`[sfu] peer ${peer.peerId} left room ${peer.roomCode} (${room.size} remaining)`);
+  console.log(
+    `[sfu] peer ${peer.peerId} left room ${peer.roomCode} (${room.size} remaining)`,
+  );
 
   // Notify remaining peers
   for (const otherPeer of room.values()) {
-    send(otherPeer.ws, { type: "ms:peer-left", peerId: peer.peerId } as MSPeerLeft);
+    send(otherPeer.ws, {
+      type: "ms:peer-left",
+      peerId: peer.peerId,
+    } as MSPeerLeft);
   }
 
   // Clean up empty room
@@ -468,7 +580,7 @@ async function main(): Promise<void> {
         const room = getOrCreateRoom(joinMsg.roomCode);
         if (room.has(peer.peerId)) {
           console.warn(
-            `[sfu] duplicate peerId ${peer.peerId} in room ${peer.roomCode}; rejecting join`
+            `[sfu] duplicate peerId ${peer.peerId} in room ${peer.roomCode}; rejecting join`,
           );
           ws.close();
           peer = null;
@@ -510,6 +622,12 @@ async function main(): Promise<void> {
             break;
           case "ms:consume":
             await handleConsume(peer, msg as MSConsume);
+            break;
+          case "ms:close-consumer":
+            handleCloseConsumer(peer, msg as MSCloseConsumer);
+            break;
+          case "ms:close-producer":
+            handleCloseProducer(peer, msg as MSCloseProducer);
             break;
           default:
             console.warn("[sfu] unknown message type:", (msg as any).type);

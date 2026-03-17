@@ -61,6 +61,24 @@ interface MSProducerClosed {
   producerId: string;
   source: VideoSource;
 }
+interface MSProducerConsumed {
+  type: "ms:producer-consumed";
+  peerId: string;
+  producerId: string;
+}
+interface MSProducerConsumerClosed {
+  type: "ms:producer-consumer-closed";
+  peerId: string;
+  producerId: string;
+}
+interface MSCloseConsumer {
+  type: "ms:close-consumer";
+  producerId: string;
+}
+interface MSCloseProducer {
+  type: "ms:close-producer";
+  producerId: string;
+}
 
 type MSMessage =
   | MSGetCapabilities
@@ -74,7 +92,11 @@ type MSMessage =
   | MSConsumerOptions
   | MSNewProducer
   | MSPeerLeft
-  | MSProducerClosed;
+  | MSProducerClosed
+  | MSProducerConsumed
+  | MSProducerConsumerClosed
+  | MSCloseConsumer
+  | MSCloseProducer;
 
 interface Producer {
   producer: mediasoupClient.types.Producer;
@@ -227,6 +249,14 @@ export class MediasoupVideo implements VideoTransport {
 
   /** Start watching a pending screen-share transmission from a remote peer. */
   async watchTransmission(peerId: string, producerId: string): Promise<void> {
+    // Already actively watching this peer's transmission (has live consumers)
+    const existingConsumers = this.consumers.get(peerId);
+    if (
+      existingConsumers &&
+      existingConsumers.some((c) => c.source === "screen")
+    ) {
+      return;
+    }
     // Remove from pending so the tile changes from "click to watch" to live video
     this.pendingTransmissions.delete(peerId);
     this.watchingTransmissionPeers.add(peerId);
@@ -256,6 +286,10 @@ export class MediasoupVideo implements VideoTransport {
     if (!peerConsumers) return;
     const screenConsumers = peerConsumers.filter((c) => c.source === "screen");
     for (const c of screenConsumers) {
+      this.signal({
+        type: "ms:close-consumer",
+        producerId: c.consumer.producerId,
+      });
       c.consumer.close();
     }
     // Remove screen consumers from the map entry
@@ -379,8 +413,16 @@ export class MediasoupVideo implements VideoTransport {
 
   private stopSource(source: VideoSource): void {
     const ps = this.producers.get(source);
-    if (!ps || ps.length === 0) return;
-    ps.forEach((p) => p.producer.close());
+    if (!ps || ps.length === 0) {
+      return;
+    }
+    ps.forEach((p) => {
+      this.signal({
+        type: "ms:close-producer",
+        producerId: p.producer.id,
+      });
+      p.producer.close();
+    });
     ps[0].stream.getTracks().forEach((t) => t.stop());
     this.producers.delete(source);
     this.paused.delete(source);
@@ -520,6 +562,25 @@ export class MediasoupVideo implements VideoTransport {
         break;
 
       case "ms:producer-closed":
+        // Close all consumers for this producer and emit trackRemoved
+        this.consumers.forEach((consumerList, peerId) => {
+          const filtered = consumerList.filter((c) => {
+            if (c.consumer.producerId === msg.producerId) {
+              c.consumer.close();
+              if (msg.source === "screen") {
+                this.emit("trackRemoved", peerId, "screen");
+              }
+              return false;
+            }
+            return true;
+          });
+          if (filtered.length > 0) {
+            this.consumers.set(peerId, filtered);
+          } else {
+            this.consumers.delete(peerId);
+          }
+        });
+
         if (msg.source === "screen") {
           const ids = this.pendingScreenProducerIds.get(msg.peerId);
           if (ids) {
@@ -532,7 +593,20 @@ export class MediasoupVideo implements VideoTransport {
               }
             }
           }
+          // Also emit transmissionEnded if we were watching this peer's transmission
+          if (this.watchingTransmissionPeers.has(msg.peerId)) {
+            this.watchingTransmissionPeers.delete(msg.peerId);
+            this.emit("transmissionEnded", msg.peerId);
+          }
         }
+        break;
+
+      case "ms:producer-consumed":
+        this.emit("transmissionWatched", msg.peerId);
+        break;
+
+      case "ms:producer-consumer-closed":
+        this.emit("transmissionWatchEnded", msg.peerId);
         break;
     }
   }

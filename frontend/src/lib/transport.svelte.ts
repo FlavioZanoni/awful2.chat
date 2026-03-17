@@ -4,6 +4,21 @@ import { MediasoupVideo } from "./transport/mediasoup";
 import type { VideoSource } from "./transport/types";
 import { identityStore } from "./identity.svelte";
 import {
+  playJoinSound,
+  playLeaveSound,
+  playMuteSound,
+  playUnmuteSound,
+  playDeafenSound,
+  playUndeafenSound,
+  playCameraOnSound,
+  playCameraOffSound,
+  playScreenShareStartSound,
+  playScreenShareStopSound,
+  playTransmissionJoinSound,
+  playTransmissionLeaveSound,
+  playTransmissionEndedSound,
+} from "./sounds";
+import {
   getOwnProfile,
   putMessage,
   bulkPutMessages,
@@ -583,7 +598,16 @@ _video.on("transmissionEnded", (peerId) => {
   if (transportState.watchingTransmissionPeerId === peerId) {
     transportState.watchingTransmissionPeerId = null;
     transportState.watchingTransmissionProducerId = null;
+    playTransmissionEndedSound();
   }
+});
+
+_video.on("transmissionWatched", () => {
+  playTransmissionJoinSound();
+});
+
+_video.on("transmissionWatchEnded", () => {
+  playTransmissionLeaveSound();
 });
 
 _video.on("error", (err) => {
@@ -773,6 +797,7 @@ export async function joinCall(): Promise<void> {
     await _voice.join(transportState.roomCode ?? "");
     await _video.join(transportState.roomCode ?? "", _transport.selfId());
     transportState.inCall = true;
+    playJoinSound();
     _sendCallPresence();
     transportState.muted = _voice.isMuted();
     transportState.localMicStream = _voice.getMicStream();
@@ -793,6 +818,7 @@ export async function joinCall(): Promise<void> {
 
 export function leaveCall(): void {
   if (transportState.inCall) {
+    playLeaveSound();
     transportState.inCall = false;
     _sendCallPresence();
   }
@@ -816,8 +842,13 @@ export function leaveCall(): void {
 }
 
 export function toggleMute(): void {
-  if (_voice.isMuted()) _voice.unmute();
-  else _voice.mute();
+  if (_voice.isMuted()) {
+    _voice.unmute();
+    playUnmuteSound();
+  } else {
+    _voice.mute();
+    playMuteSound();
+  }
   transportState.muted = _voice.isMuted();
 }
 
@@ -834,6 +865,7 @@ export async function startCamera(): Promise<void> {
     });
     transportState.localCameraStream = stream;
     transportState.cameraOff = false;
+    playCameraOnSound();
     await _video.startCamera(stream);
   } catch (err) {
     transportState.error = err instanceof Error ? err.message : String(err);
@@ -845,6 +877,7 @@ export function stopCamera(): void {
   transportState.localCameraStream?.getTracks().forEach((t) => t.stop());
   transportState.localCameraStream = null;
   transportState.cameraOff = true;
+  playCameraOffSound();
   _video.stopCamera();
 }
 
@@ -862,6 +895,7 @@ export async function startScreenShare(): Promise<void> {
     });
     transportState.localScreenStream = stream;
     transportState.screenSharing = true;
+    playScreenShareStartSound();
     stream.getVideoTracks()[0].onended = () => stopScreenShare();
     await _video.startScreenShare(stream);
   } catch (err) {
@@ -874,6 +908,7 @@ export function stopScreenShare(): void {
   transportState.localScreenStream?.getTracks().forEach((t) => t.stop());
   transportState.localScreenStream = null;
   transportState.screenSharing = false;
+  playScreenShareStopSound();
   _video.stopScreenShare();
 }
 
@@ -985,11 +1020,13 @@ export function setDeafened(deafened: boolean): void {
     transportState.transmissionOutputVolume = 0;
     _applyTransmissionVolume(0);
     transportState.deafened = true;
+    playDeafenSound();
   } else {
     _voice.setOutputVolume(_voiceOutputBeforeDeafen);
     transportState.transmissionOutputVolume = _videoOutputBeforeDeafen;
     _applyTransmissionVolume(_videoOutputBeforeDeafen);
     transportState.deafened = false;
+    playUndeafenSound();
   }
 }
 
