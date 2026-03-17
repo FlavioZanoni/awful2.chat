@@ -26,6 +26,9 @@ importers:
       '@tanstack/svelte-query':
         specifier: ^6.1.0
         version: 6.1.0(svelte@5.53.10)
+      emoji-picker-element:
+        specifier: ^1.29.1
+        version: 1.29.1
       idb:
         specifier: ^8.0.3
         version: 8.0.3
@@ -912,6 +915,9 @@ packages:
 
   elliptic@6.6.1:
     resolution: {integrity: sha512-RaddvvMatK2LJHqFJ+YA4WysVN5Ita9E35botqIYspQ4TkRAlCicdzKOjlyv/1Za5RyTNn7di//eEV0uTAfe3g==}
+
+  emoji-picker-element@1.29.1:
+    resolution: {integrity: sha512-TOiHzu9Dqib3x4MwcAi3wi3RdyT4SoeB4b15AvH1ks4SBwTl7DeebhZ0d3x6dNi4XfNU7IGRZ7NBQllj0RqwrQ==}
 
   end-of-stream@1.4.5:
     resolution: {integrity: sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg==}
@@ -2698,6 +2704,8 @@ snapshots:
       inherits: 2.0.4
       minimalistic-assert: 1.0.1
       minimalistic-crypto-utils: 1.0.1
+
+  emoji-picker-element@1.29.1: {}
 
   end-of-stream@1.4.5:
     dependencies:
