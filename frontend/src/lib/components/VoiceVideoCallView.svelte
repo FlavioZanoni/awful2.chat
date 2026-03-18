@@ -434,7 +434,7 @@
       {isFocused ? 'w-full h-full' : ''}
       {compact ? 'aspect-video' : ''}
       {isSpeaking
-      ? 'ring-2 ring-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
+      ? 'ring-2 ring-primary shadow-[0_0_8px_rgba(0,255,136,0.4)]'
       : ''}
       {isPendingTx ? 'ring-1 ring-primary/40 hover:ring-primary/80' : ''}"
     onclick={() => {
@@ -549,7 +549,7 @@
       <button
         type="button"
         onclick={joinCall}
-        class="group relative flex items-center gap-2 rounded-xl bg-linear-to-br from-emerald-600 to-emerald-700 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/30 transition-all duration-200 hover:from-emerald-400 hover:to-emerald-500 hover:scale-105 hover:shadow-emerald-500/50"
+        class="group relative flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all duration-200 hover:bg-primary/90 hover:scale-105 hover:shadow-primary/50"
       >
         <Phone class="size-4" />
         Join Call

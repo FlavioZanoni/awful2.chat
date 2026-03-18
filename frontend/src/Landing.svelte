@@ -489,8 +489,8 @@
 <style>
   /* CSS variables scoped to the root wrapper — no :root or :global needed */
   .app {
-    --bg: #050505;
-    --bg-elevated: #0a0a0a;
+    --bg: #09090b;
+    --bg-elevated: #121212;
     --fg: #e8e8e8;
     --fg-muted: #666;
     /* --accent is now global via app.css */

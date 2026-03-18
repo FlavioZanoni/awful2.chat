@@ -117,7 +117,7 @@
         </button>
         <div
           class="absolute -bottom-0.5 -right-0.5 size-3 rounded-full ring-2 ring-card
-          {transportState.connected ? 'bg-emerald-500' : 'bg-yellow-500'}"
+          {transportState.connected ? 'bg-primary' : 'bg-yellow-500'}"
         ></div>
       </div>
 

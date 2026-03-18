@@ -84,7 +84,7 @@
         <div class="flex items-center justify-between">
           <div>
             <CardTitle class="text-xl font-mono text-foreground"
-              >awful.chat</CardTitle
+              >Awful.chat</CardTitle
             >
             <CardDescription class="text-xs mt-1 text-muted-foreground">
               Private rooms, peer-to-peer
@@ -93,7 +93,7 @@
           <div
             class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-muted text-xs"
           >
-            <span class="size-2 rounded-full bg-emerald-500"></span>
+            <span class="size-2 rounded-full bg-primary"></span>
             <span class="text-muted-foreground">Connected</span>
           </div>
         </div>
@@ -223,7 +223,7 @@
             aria-label="Copy room code"
           >
             {#if copied}
-              <Check class="size-4 text-emerald-500" />
+              <Check class="size-4 text-primary" />
             {:else}
               <Copy class="size-4" />
             {/if}

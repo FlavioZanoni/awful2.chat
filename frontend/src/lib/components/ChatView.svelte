@@ -256,7 +256,7 @@
         >
           <code>{roomCode}</code>
           {#if copied}
-            <Check class="size-3 text-emerald-500 " />
+            <Check class="size-3 text-primary " />
           {:else}
             <Copy class="size-3 mb-0.5" />
           {/if}
