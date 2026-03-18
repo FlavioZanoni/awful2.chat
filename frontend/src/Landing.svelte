@@ -493,8 +493,8 @@
     --bg-elevated: #0a0a0a;
     --fg: #e8e8e8;
     --fg-muted: #666;
-    --accent: #00ff88;
-    --accent-dim: #00cc6a;
+    /* --accent is now global via app.css */
+    --accent-dim: oklch(0.7 0.15 155);
     --border: #1a1a1a;
     --glow: rgba(0, 255, 136, 0.15);
 

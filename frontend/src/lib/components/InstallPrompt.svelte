@@ -4,6 +4,7 @@
   import { Download } from "@lucide/svelte";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
+  import { pageStore } from "$lib/pageStore.svelte.js"; // Assuming pageStore exists or similar
 
   let open = $state(false);
   let deferredPrompt = $state<BeforeInstallPromptEvent | null>(null);
@@ -23,7 +24,10 @@
       // Let's show it automatically for now, but maybe with a cooldown
       setTimeout(() => {
         if (deferredPrompt && !isStandalone) {
-          open = true;
+           // Only show if NOT on the root landing page (/)
+           if (window.location.pathname !== "/") {
+             open = true;
+           }
         }
       }, 3000); // Show 3 seconds after load
     };
