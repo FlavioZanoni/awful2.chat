@@ -17,10 +17,15 @@ export default defineConfig({
       manifest: {
         name: "Awful.chat",
         short_name: "Awful.chat",
-        scope: "/app/",
         description:
           "End-to-end encrypted P2P chat with voice, video, and file sharing. Open source. No accounts, no phone numbers, no personal data required.",
-        theme_color: "#09090b",
+        id: "awfulchat",
+        scope: "/",
+        start_url: "/app",
+        display: "standalone",
+        background_color: "#09090b",
+        theme_color: "#00ff88",
+        lang: "en",
         icons: [
           {
             src: "pwa-64x64.png",
@@ -44,6 +49,9 @@ export default defineConfig({
             purpose: "maskable",
           },
         ],
+        dir: "ltr",
+        orientation: "portrait",
+        categories: ["entertainment", "social"],
       },
     }),
   ],
