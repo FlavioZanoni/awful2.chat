@@ -124,24 +124,6 @@
 </script>
 
 <svelte:head>
-  <title>Awful.chat - Privacy is not optional</title>
-  <link rel="canonical" href="https://awful.chat" />
-  <meta name="description" content="End-to-end encrypted P2P chat. Self-hosted. Open source. No accounts required." />
-  <meta name="theme-color" content="#050505" />
-  <meta name="robots" content="index, follow" />
-
-  <!-- Open Graph -->
-  <meta property="og:title" content="Awful.chat - Privacy is not optional" />
-  <meta property="og:description" content="End-to-end encrypted P2P chat. Self-hosted. Open source. No accounts required." />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://awful.chat" />
-  <meta property="og:site_name" content="Awful.chat" />
-
-  <!-- Twitter -->
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Awful.chat - Privacy is not optional" />
-  <meta name="twitter:description" content="End-to-end encrypted P2P chat. Self-hosted. Open source. No accounts required." />
-
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link
     rel="preconnect"
