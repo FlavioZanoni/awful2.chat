@@ -15,9 +15,10 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "apple-touch-icon-180x180.png"],
       manifest: {
-        name: "Awful.chat",
+        name: "Awful.chat - No need to expose your identity to have a conversation.",
         short_name: "Awful.chat",
-        description: "Privacy focused chat app",
+        description:
+          "End-to-end encrypted P2P chat with voice and video. Self-hosted. Open source. No accounts required.",
         theme_color: "#09090b",
         icons: [
           {
