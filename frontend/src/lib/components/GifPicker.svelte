@@ -1,15 +1,15 @@
 <script lang="ts">
-  import { Bookmark, Search, X, Loader2 } from "@lucide/svelte";
-import { Button } from "$lib/components/ui/button";
-import { Input } from "$lib/components/ui/input";
-import * as Dialog from "$lib/components/ui/dialog";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-} from "$lib/components/ui/drawer";
-import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import { Bookmark, Search, X, Loader } from "@lucide/svelte";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import * as Dialog from "$lib/components/ui/dialog";
+  import {
+    Drawer,
+    DrawerContent,
+    DrawerHeader,
+    DrawerTitle,
+  } from "$lib/components/ui/drawer";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { searchGifs, getTrendingGifs, type KlipyGif } from "$lib/klipy";
   import {
     getAllSavedGifs,
@@ -299,7 +299,7 @@ import { ScrollArea } from "$lib/components/ui/scroll-area";
     <div class="p-4 pt-0">
       {#if loading && validGifs.length === 0}
         <div class="flex items-center justify-center py-8">
-          <Loader2 class="size-6 animate-spin text-muted-foreground" />
+          <Loader class="size-6 animate-spin text-muted-foreground" />
         </div>
       {:else if validGifs.length === 0}
         <div class="text-center py-8 text-muted-foreground text-sm font-mono">
@@ -316,10 +316,7 @@ import { ScrollArea } from "$lib/components/ui/scroll-area";
           {#each validGifs as gif, idx (idx === validGifs.length - 1 ? `load-more-${gif.gifId ?? gif.id}` : (gif.gifId ?? gif.id))}
             {@const gifUrl = gif.urls?.gif || gif.url || ""}
             {@const previewUrl =
-              gif.urls?.mediumgif ||
-              gif.urls?.tinygif ||
-              gif.previewUrl ||
-              ""}
+              gif.urls?.mediumgif || gif.urls?.tinygif || gif.previewUrl || ""}
             {@const resolvedId = gif.gifId || gif.id}
             {@const isSaved = savedIds.has(resolvedId)}
             {@const isLarge = (idx + 1) % 7 === 0}
@@ -362,7 +359,7 @@ import { ScrollArea } from "$lib/components/ui/scroll-area";
         </div>
         {#if loading}
           <div class="flex items-center justify-center py-4">
-            <Loader2 class="size-5 animate-spin text-muted-foreground" />
+            <Loader class="size-5 animate-spin text-muted-foreground" />
           </div>
         {/if}
       {/if}
@@ -382,13 +379,11 @@ import { ScrollArea } from "$lib/components/ui/scroll-area";
 {/snippet}
 
 {#if isMobile}
-  <Drawer
-    {open}
-    onOpenChange={onOpenChange}
-    direction="bottom"
-  >
+  <Drawer {open} {onOpenChange} direction="bottom">
     <DrawerContent class="bg-card text-card-foreground">
-      <DrawerHeader class="relative px-4 pb-0 pt-3 shrink-0 flex flex-row items-center justify-between gap-2">
+      <DrawerHeader
+        class="relative px-4 pb-0 pt-3 shrink-0 flex flex-row items-center justify-between gap-2"
+      >
         <DrawerTitle class="text-sm font-semibold">Choose a GIF</DrawerTitle>
         <button
           type="button"

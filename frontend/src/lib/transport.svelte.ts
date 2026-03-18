@@ -30,6 +30,11 @@ import {
   getPeerProfile,
   putPeerProfile,
   getAllPeerProfiles,
+  getAttachmentsWithData,
+  putAttachment,
+  getAttachmentsByInfoHash,
+  getAttachmentsByMessage,
+  updateAttachmentStatus,
 } from "./storage";
 import {
   MessageType,
@@ -40,8 +45,17 @@ import {
   type AnyWireMessage,
   type WireChatMessage,
   type WireProfile,
+  type FileEntry,
+  type FileMeta,
+  type Attachment,
 } from "./types/message";
 import { refreshUnreadCount, roomsStore } from "./rooms.svelte";
+import { WebTorrentFileTransport } from "./transport/file/webtorrent";
+import type {
+  FileSignalEnvelope,
+  FileDescriptor,
+  FileTransferSnapshot,
+} from "./transport/types";
 
 export type { Message };
 
@@ -79,6 +93,7 @@ interface TransportState {
   watchingTransmissionPeerId: string | null;
   watchingTransmissionProducerId: string | null;
   transmissionOutputVolume: number;
+  fileTransfers: Map<string, FileTransferSnapshot>;
 }
 
 export const transportState = $state<TransportState>({
@@ -105,6 +120,7 @@ export const transportState = $state<TransportState>({
   watchingTransmissionPeerId: null,
   watchingTransmissionProducerId: null,
   transmissionOutputVolume: 1,
+  fileTransfers: new Map(),
 });
 
 let _lamport = 0;
@@ -112,11 +128,14 @@ let _voiceOutputBeforeDeafen = 1;
 let _videoOutputBeforeDeafen = 1;
 
 const BATCH_SIZE = 20;
+const MAX_PERSISTED_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const _peerIdToDid = new Map<string, string>();
+const _seededByFingerprint = new Map<string, FileDescriptor>();
 
 const _transport = new SimplePeerTransport();
 const _voice = new SimplePeerVoice(_transport);
 const _video = new MediasoupVideo();
+const _fileTransport = new WebTorrentFileTransport(() => _transport.selfId());
 
 function lamportSend(): number {
   _lamport += 1;
@@ -145,6 +164,65 @@ function normalizeAvatarUrl(url: unknown): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+interface FileSignalWireMessage {
+  type: "__file_signal";
+  payload: FileSignalEnvelope;
+}
+
+function isFileSignalWireMessage(
+  value: unknown
+): value is FileSignalWireMessage {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { type?: unknown }).type === "__file_signal" &&
+    typeof (value as { payload?: unknown }).payload === "object" &&
+    (value as { payload?: unknown }).payload !== null
+  );
+}
+
+function maybePeerIdFromSenderId(senderId: string): string | null {
+  if (_transport.peers().includes(senderId)) return senderId;
+  for (const [peerId, did] of _peerIdToDid) {
+    if (did === senderId) return peerId;
+  }
+  return null;
+}
+
+function shouldAutoDownload(mimeType: string): boolean {
+  return mimeType.startsWith("image/") || mimeType.startsWith("video/");
+}
+
+async function fileFingerprint(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    await file.arrayBuffer()
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function withFileTransfer(snapshot: FileTransferSnapshot): void {
+  const prev = transportState.fileTransfers.get(snapshot.infoHash);
+  const nextSnapshot: FileTransferSnapshot = {
+    ...(prev ?? {}),
+    ...snapshot,
+    blobURL: snapshot.blobURL ?? prev?.blobURL,
+  } as FileTransferSnapshot;
+  const next = new Map(transportState.fileTransfers);
+  next.set(snapshot.infoHash, nextSnapshot);
+  transportState.fileTransfers = next;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    for (const transfer of transportState.fileTransfers.values()) {
+      if (transfer.blobURL) URL.revokeObjectURL(transfer.blobURL);
+    }
+  });
 }
 
 // ── Senders ───────────────────────────────────────────────────────────────────
@@ -211,6 +289,22 @@ async function _loadHistory(roomCode: string): Promise<void> {
     }
     transportState.peerNames = names;
     transportState.peerAvatars = avatars;
+  }
+
+  for (const msg of msgs) {
+    if (msg.type !== MessageType.File || !msg.meta?.files?.length) continue;
+    for (const file of msg.meta.files) {
+      if (transportState.fileTransfers.has(file.infoHash)) continue;
+      withFileTransfer({
+        ...file,
+        status: "pending",
+        progress: 0,
+        done: false,
+        seeding: false,
+        peers: 0,
+        seeders: 0,
+      });
+    }
   }
 }
 
@@ -369,7 +463,10 @@ function _handleRoomName(name: string): void {
   if (trimmed.length > 0) transportState.roomName = trimmed;
 }
 
-function _handleChatMessage(wire: WireChatMessage): void {
+function _handleChatMessage(
+  wire: WireChatMessage,
+  receivedFromPeerId?: string
+): void {
   if (!transportState.roomCode) return;
 
   lamportReceive(wire.lamport);
@@ -380,19 +477,206 @@ function _handleChatMessage(wire: WireChatMessage): void {
   setWatermark(msg.roomCode, msg.senderId, msg.lamport).catch(() => {});
   refreshUnreadCount(msg.roomCode).catch(() => {});
 
-  if (!transportState.messages.some((m) => m.id === msg.id)) {
+  const isNewMessage = !transportState.messages.some((m) => m.id === msg.id);
+
+  if (isNewMessage) {
     transportState.messages = [...transportState.messages, msg].sort((a, b) =>
       a.lamport !== b.lamport
         ? a.lamport - b.lamport
         : a.senderId.localeCompare(b.senderId)
     );
   }
+
+  if (msg.type !== MessageType.File || !msg.meta?.files?.length) return;
+
+  const seederPeerId =
+    receivedFromPeerId ?? maybePeerIdFromSenderId(msg.senderId) ?? null;
+
+  if (isNewMessage) {
+    getAttachmentsByMessage(msg.id)
+      .then((existing) => {
+        if (existing.length > 0) return;
+        const now = Date.now();
+        return Promise.all(
+          msg.meta!.files.map((file) =>
+            putAttachment({
+              id: crypto.randomUUID(),
+              roomCode: msg.roomCode,
+              messageId: msg.id,
+              filename: file.filename,
+              mimeType: file.mimeType,
+              size: file.size,
+              infoHash: file.infoHash,
+              status: "pending",
+              createdAt: now,
+            })
+          )
+        );
+      })
+      .catch(() => {});
+  }
+
+  for (const file of msg.meta.files) {
+    if (seederPeerId) {
+      _fileTransport.registerSeeder(file, seederPeerId);
+    }
+    if (shouldAutoDownload(file.mimeType)) {
+      _fileTransport.ensureDownload(file);
+    } else {
+      withFileTransfer({
+        ...file,
+        status: "pending",
+        progress: 0,
+        done: false,
+        seeding: false,
+        peers: 0,
+        seeders: 1,
+      });
+    }
+  }
 }
+
+async function _persistAttachmentStatusForInfoHash(
+  infoHash: string,
+  status: Attachment["status"]
+): Promise<void> {
+  const attachments = await getAttachmentsByInfoHash(infoHash);
+  await Promise.all(
+    attachments.map((attachment) =>
+      updateAttachmentStatus(attachment.id, status)
+    )
+  );
+}
+
+async function _persistDownloadedBlob(
+  infoHash: string,
+  blob: Blob
+): Promise<void> {
+  const attachments = await getAttachmentsByInfoHash(infoHash);
+  if (!attachments.length) return;
+
+  const shouldPersistData = attachments.some(
+    (attachment) => attachment.size <= MAX_PERSISTED_ATTACHMENT_BYTES
+  );
+  const data = shouldPersistData ? await blob.arrayBuffer() : undefined;
+
+  await Promise.all(
+    attachments.map((attachment) =>
+      putAttachment({
+        ...attachment,
+        data:
+          attachment.size <= MAX_PERSISTED_ATTACHMENT_BYTES
+            ? data
+            : attachment.data,
+        status: "complete",
+      })
+    )
+  );
+}
+
+async function _hydrateFileTransfersFromStorage(
+  roomCode: string
+): Promise<void> {
+  const seedable = await getAttachmentsWithData(roomCode);
+  for (const attachment of seedable) {
+    if (!attachment.data) continue;
+    const file: FileEntry = {
+      infoHash: attachment.infoHash,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+    };
+    const blobURL = URL.createObjectURL(
+      new Blob([attachment.data], { type: attachment.mimeType })
+    );
+    withFileTransfer({
+      ...file,
+      status: attachment.status,
+      progress: 1,
+      done: true,
+      seeding: attachment.status === "seeding",
+      peers: 0,
+      seeders: attachment.status === "seeding" ? 1 : 0,
+      blobURL,
+    });
+  }
+}
+
+async function _resumeAttachmentSeeding(roomCode: string): Promise<void> {
+  const seedable = await getAttachmentsWithData(roomCode);
+  const dedup = new Map<string, Attachment>();
+  for (const attachment of seedable) {
+    if (!attachment.data) continue;
+    if (!dedup.has(attachment.infoHash))
+      dedup.set(attachment.infoHash, attachment);
+  }
+
+  const files = [...dedup.values()].map(
+    (attachment) =>
+      new File([attachment.data!], attachment.filename, {
+        type: attachment.mimeType,
+        lastModified: attachment.createdAt,
+      })
+  );
+  if (!files.length) return;
+
+  const seeded = await _fileTransport.seedFiles(files);
+  await Promise.all(
+    seeded.map((entry) =>
+      _persistAttachmentStatusForInfoHash(entry.infoHash, "seeding")
+    )
+  );
+}
+
+_fileTransport.on("signal", (peerId, envelope) => {
+  _transport.send(
+    peerId,
+    encode({
+      type: "__file_signal",
+      payload: envelope,
+    } satisfies FileSignalWireMessage)
+  );
+});
+
+_fileTransport.on("transfer", (snapshot) => {
+  withFileTransfer(snapshot);
+
+  if (
+    snapshot.status === "seeding" ||
+    snapshot.status === "complete" ||
+    snapshot.status === "failed"
+  ) {
+    _persistAttachmentStatusForInfoHash(
+      snapshot.infoHash,
+      snapshot.status
+    ).catch(() => {});
+  }
+});
+
+_fileTransport.on("downloaded", (infoHash, blob) => {
+  _persistDownloadedBlob(infoHash, blob).catch(() => {});
+
+  getAttachmentsByInfoHash(infoHash)
+    .then(async (attachments) => {
+      const existingTransfer = transportState.fileTransfers.get(infoHash);
+      if (existingTransfer?.seeding) return;
+      const attachment = attachments[0];
+      if (!attachment) return;
+      const file = new File([blob], attachment.filename, {
+        type: attachment.mimeType,
+        lastModified: Date.now(),
+      });
+      await _fileTransport.seedFiles([file]);
+      await _persistAttachmentStatusForInfoHash(infoHash, "seeding");
+    })
+    .catch(() => {});
+});
 
 // ── Transport events ──────────────────────────────────────────────────────────
 
 _transport.on("connect", (peerId) => {
   transportState.peers = _transport.peers();
+  _fileTransport.onPeerConnect(peerId);
   _broadcastProfile().catch(() => {});
   _sendRoomName(peerId);
   if (transportState.inCall) _sendCallPresence(peerId);
@@ -401,6 +685,7 @@ _transport.on("connect", (peerId) => {
 
 _transport.on("disconnect", (peerId) => {
   transportState.peers = _transport.peers();
+  _fileTransport.onPeerDisconnect(peerId);
 
   const parts = new Map(transportState.participants);
   parts.delete(peerId);
@@ -437,7 +722,20 @@ _transport.on("disconnect", (peerId) => {
 
 _transport.on("message", (peerId, data) => {
   try {
-    const msg = decode(data) as AnyWireMessage;
+    const decoded = decode(data);
+    if (isFileSignalWireMessage(decoded)) {
+      if (decoded.payload.kind === "file-seeder") {
+        _fileTransport.registerSeeder(decoded.payload.file, peerId);
+        if (shouldAutoDownload(decoded.payload.file.mimeType)) {
+          _fileTransport.ensureDownload(decoded.payload.file);
+        }
+      } else {
+        _fileTransport.handleSignal(peerId, decoded.payload);
+      }
+      return;
+    }
+
+    const msg = decoded as AnyWireMessage;
 
     switch (msg.type) {
       case MessageType.Profile:
@@ -462,7 +760,7 @@ _transport.on("message", (peerId, data) => {
       case MessageType.Reply:
       case MessageType.Reaction:
       case MessageType.File:
-        _handleChatMessage(msg);
+        _handleChatMessage(msg, peerId);
         break;
     }
   } catch {}
@@ -620,11 +918,13 @@ export async function joinRoom(roomCode: string): Promise<void> {
   transportState.error = null;
   try {
     await _loadHistory(roomCode);
+    await _hydrateFileTransfersFromStorage(roomCode);
     await _transport.connect(roomCode);
     transportState.connected = true;
     transportState.roomCode = roomCode;
     transportState.roomName = "";
     transportState.peers = _transport.peers();
+    await _resumeAttachmentSeeding(roomCode);
     await _broadcastProfile();
   } catch (err) {
     transportState.error = err instanceof Error ? err.message : String(err);
@@ -633,6 +933,9 @@ export async function joinRoom(roomCode: string): Promise<void> {
 }
 
 export function leaveRoom(): void {
+  for (const transfer of transportState.fileTransfers.values()) {
+    if (transfer.blobURL) URL.revokeObjectURL(transfer.blobURL);
+  }
   leaveCall();
   _transport.disconnect();
   _peerIdToDid.clear();
@@ -650,11 +953,14 @@ export function leaveRoom(): void {
   transportState.pendingTransmissions = new Map();
   transportState.watchingTransmissionPeerId = null;
   transportState.watchingTransmissionProducerId = null;
+  transportState.fileTransfers = new Map();
 }
 
 interface SendMessageOptions {
   replyTo?: Message["replyTo"];
   type?: ChatMessageType;
+  meta?: FileMeta;
+  attachments?: string[];
   reactionTo?: string;
   reactionEmoji?: string;
   reactionOp?: "add" | "remove";
@@ -680,7 +986,8 @@ export async function sendMessage(
     lamport,
     type: options.type ?? MessageType.Text,
     content: text,
-    attachments: [],
+    meta: options.meta,
+    attachments: options.attachments ?? [],
     replyTo: options.replyTo,
     reactionTo: options.reactionTo,
     reactionEmoji: options.reactionEmoji,
@@ -714,6 +1021,110 @@ export async function sendReply(text: string, target: Message): Promise<void> {
       content: snapshot,
     },
   });
+}
+
+export async function sendFiles(
+  files: File[],
+  text = "",
+  options: Pick<SendMessageOptions, "replyTo"> = {}
+): Promise<void> {
+  if (!transportState.roomCode || !files.length) return;
+
+  const seeded: FileDescriptor[] = [];
+  const sourceByInfoHash = new Map<string, File>();
+
+  for (const file of files) {
+    const fingerprint = await fileFingerprint(file);
+    const existing = _seededByFingerprint.get(fingerprint);
+    if (existing) {
+      seeded.push(existing);
+      sourceByInfoHash.set(existing.infoHash, file);
+      continue;
+    }
+
+    const [newSeed] = await _fileTransport.seedFiles([file]);
+    _seededByFingerprint.set(fingerprint, newSeed);
+    seeded.push(newSeed);
+    sourceByInfoHash.set(newSeed.infoHash, file);
+  }
+
+  const messageId = crypto.randomUUID();
+  const attachmentIds: string[] = [];
+  const createdAt = Date.now();
+
+  for (let i = 0; i < seeded.length; i += 1) {
+    const seededFile = seeded[i];
+    const source = sourceByInfoHash.get(seededFile.infoHash);
+    if (!source) continue;
+    const canPersistData = source.size <= MAX_PERSISTED_ATTACHMENT_BYTES;
+    const attachment: Attachment = {
+      id: crypto.randomUUID(),
+      roomCode: transportState.roomCode,
+      messageId,
+      filename: seededFile.filename,
+      mimeType: seededFile.mimeType,
+      size: seededFile.size,
+      infoHash: seededFile.infoHash,
+      status: "seeding",
+      createdAt,
+      data: canPersistData ? await source.arrayBuffer() : undefined,
+    };
+    attachmentIds.push(attachment.id);
+    await putAttachment(attachment);
+
+    withFileTransfer({
+      ...seededFile,
+      status: "seeding",
+      progress: 1,
+      done: true,
+      seeding: true,
+      peers: 0,
+      seeders: 1,
+      blobURL: URL.createObjectURL(source),
+    });
+  }
+
+  const profile = await getOwnProfile();
+  const senderName = profile?.nickname?.trim() || "Anonymous";
+  const myId = identityStore.did ?? _transport.selfId();
+  const lamport = lamportSend();
+
+  const msg: Message = {
+    id: messageId,
+    roomCode: transportState.roomCode,
+    senderId: myId,
+    senderName,
+    timestamp: createdAt,
+    lamport,
+    type: MessageType.File,
+    content: text.trim(),
+    meta: { files: seeded },
+    attachments: attachmentIds,
+    replyTo: options.replyTo,
+  };
+
+  _transport.broadcast(encode(messageToWire(msg)));
+  await putMessage(msg);
+  await setWatermark(msg.roomCode, msg.senderId, msg.lamport);
+
+  transportState.messages = [...transportState.messages, msg].sort((a, b) =>
+    a.lamport !== b.lamport
+      ? a.lamport - b.lamport
+      : a.senderId.localeCompare(b.senderId)
+  );
+
+  markRoomSeen(msg.roomCode, msg.lamport).catch(() => {});
+}
+
+export function requestFileDownload(
+  file: FileEntry,
+  senderId?: string | null
+): void {
+  const peerId = senderId ? maybePeerIdFromSenderId(senderId) : null;
+  if (peerId) {
+    _fileTransport.registerSeeder(file, peerId);
+  }
+  _fileTransport.ensureDownload(file);
 }
 
 export async function toggleReaction(

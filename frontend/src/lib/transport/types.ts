@@ -162,3 +162,65 @@ export interface VideoTransport {
   off<K extends keyof VideoEvents>(event: K, handler: VideoEvents[K]): void;
   activePeers(): string[];
 }
+
+export type FileTransferStatus =
+  | "pending"
+  | "seeding"
+  | "downloading"
+  | "complete"
+  | "failed";
+
+export interface FileDescriptor {
+  infoHash: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface FileTransferSnapshot extends FileDescriptor {
+  status: FileTransferStatus;
+  progress: number;
+  done: boolean;
+  seeding: boolean;
+  peers: number;
+  seeders: number;
+  blobURL?: string;
+  error?: string;
+}
+
+export type FileSignalEnvelope =
+  | {
+      kind: "file-seeder";
+      file: FileDescriptor;
+    }
+  | {
+      kind: "file-wt-signal";
+      infoHash: string;
+      signal: unknown;
+    };
+
+export interface FileTransferEvents {
+  signal: (peerId: string, envelope: FileSignalEnvelope) => void;
+  transfer: (snapshot: FileTransferSnapshot) => void;
+  downloaded: (infoHash: string, blob: Blob) => void;
+}
+
+export interface FileTransferTransport {
+  seedFiles(files: File[]): Promise<FileDescriptor[]>;
+  registerSeeder(file: FileDescriptor, seederPeerId: string): void;
+  ensureDownload(file: FileDescriptor): void;
+  handleSignal(fromPeerId: string, envelope: FileSignalEnvelope): void;
+  onPeerConnect(peerId: string): void;
+  onPeerDisconnect(peerId: string): void;
+  getTransfer(infoHash: string): FileTransferSnapshot | undefined;
+  getTransfers(): FileTransferSnapshot[];
+  on<K extends keyof FileTransferEvents>(
+    event: K,
+    handler: FileTransferEvents[K]
+  ): void;
+  off<K extends keyof FileTransferEvents>(
+    event: K,
+    handler: FileTransferEvents[K]
+  ): void;
+  destroy(): void;
+}

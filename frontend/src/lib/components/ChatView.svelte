@@ -14,11 +14,15 @@
     Smile,
     Reply,
     X,
+    Paperclip,
+    FileText,
+    ArrowDown,
   } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import { Badge } from "$lib/components/ui/badge";
   import { Separator } from "$lib/components/ui/separator";
   import VoiceVideoCallView from "./VoiceVideoCallView.svelte";
+  import MsgRender from "./MsgRender.svelte";
   import GifPicker from "./GifPicker.svelte";
   import EmojiPickerPopup from "./EmojiPickerPopup.svelte";
   import { profileStore, loadProfile } from "$lib/profile.svelte";
@@ -28,9 +32,11 @@
     selfId,
     joinCall,
     sendReply,
+    sendFiles,
     toggleReaction,
     loadMoreMessages,
     markSeen,
+    requestFileDownload,
   } from "$lib/transport.svelte";
 
   $effect(() => {
@@ -47,7 +53,7 @@
 
   let { roomCode, roomName, onLeave, onOpenSidebar }: Props = $props();
 
-  let { peers, messages, inCall, peerNames, peerAvatars } =
+  let { peers, messages, inCall, peerNames, peerAvatars, fileTransfers } =
     $derived(transportState);
 
   let draft = $state("");
@@ -58,6 +64,12 @@
   let hasMoreHistory = $state(true);
   let loadingMore = $state(false);
   let activeMessageId = $state<string | null>(null);
+  let stagedFiles = $state<File[]>([]);
+  let fileInputEl = $state<HTMLInputElement | null>(null);
+  let dragOverlayActive = $state(false);
+  let dragDepth = $state(0);
+  let stagedPreviewUrls = $state(new Map<string, string>());
+  const stagedFileFingerprints = new Map<string, string>();
 
   // Swipe to reply state
   let swipeStartX = $state(0);
@@ -113,6 +125,12 @@
   });
 
   function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && stagedFiles.length > 0) {
+      e.preventDefault();
+      clearStagedFiles();
+      return;
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -121,9 +139,28 @@
 
   function submit() {
     const text = draft.trim();
-    if (!text) return;
-    if (replyTarget) sendReply(text, replyTarget);
-    else sendMessage(text);
+    if (!text && stagedFiles.length === 0) return;
+
+    if (stagedFiles.length > 0) {
+      sendFiles(stagedFiles, text, {
+        replyTo: replyTarget
+          ? {
+              id: replyTarget.id,
+              senderName: replyTarget.senderName,
+              content:
+                replyTarget.content.length > 160
+                  ? `${replyTarget.content.slice(0, 157)}...`
+                  : replyTarget.content,
+            }
+          : undefined,
+      });
+      clearStagedFiles();
+    } else if (replyTarget) {
+      sendReply(text, replyTarget);
+    } else {
+      sendMessage(text);
+    }
+
     draft = "";
     replyTargetId = null;
     autoScroll = true;
@@ -163,6 +200,133 @@
     const more = await loadMoreMessages(oldest);
     hasMoreHistory = more;
     loadingMore = false;
+  }
+
+  function fileKey(file: File): string {
+    return `${file.name}:${file.size}:${file.lastModified}`;
+  }
+
+  async function fingerprintFile(file: File): Promise<string> {
+    const buffer = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest("SHA-256", buffer);
+    const bytes = new Uint8Array(digest);
+    return Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  async function addFilesToStage(files: FileList | File[]) {
+    const incoming = Array.from(files);
+    if (!incoming.length) return;
+
+    const dedup = new Map(stagedFiles.map((file) => [fileKey(file), file]));
+    const existingFingerprints = new Set<string>();
+
+    for (const file of stagedFiles) {
+      const key = fileKey(file);
+      let fp = stagedFileFingerprints.get(key);
+      if (!fp) {
+        fp = await fingerprintFile(file);
+        stagedFileFingerprints.set(key, fp);
+      }
+      existingFingerprints.add(fp);
+    }
+
+    for (const file of incoming) {
+      const key = fileKey(file);
+      const fp = await fingerprintFile(file);
+      if (existingFingerprints.has(fp)) continue;
+      existingFingerprints.add(fp);
+      stagedFileFingerprints.set(key, fp);
+      dedup.set(key, file);
+    }
+
+    stagedFiles = [...dedup.values()];
+    dragOverlayActive = false;
+    dragDepth = 0;
+  }
+
+  function removeStagedFile(target: File) {
+    const key = fileKey(target);
+    const next = stagedFiles.filter((file) => fileKey(file) !== key);
+    stagedFiles = next;
+
+    const url = stagedPreviewUrls.get(key);
+    if (url) {
+      URL.revokeObjectURL(url);
+      const map = new Map(stagedPreviewUrls);
+      map.delete(key);
+      stagedPreviewUrls = map;
+    }
+    stagedFileFingerprints.delete(key);
+  }
+
+  function clearStagedFiles() {
+    for (const url of stagedPreviewUrls.values()) {
+      URL.revokeObjectURL(url);
+    }
+    stagedPreviewUrls = new Map();
+    stagedFiles = [];
+    stagedFileFingerprints.clear();
+    if (fileInputEl) fileInputEl.value = "";
+  }
+
+  function isPreviewable(file: File): boolean {
+    return file.type.startsWith("image/") || file.type.startsWith("video/");
+  }
+
+  function getStagedPreviewURL(file: File): string | null {
+    if (!isPreviewable(file)) return null;
+    const key = fileKey(file);
+    return stagedPreviewUrls.get(key) ?? null;
+  }
+
+  function formatSize(size: number): string {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    if (size < 1024 * 1024 * 1024)
+      return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+
+  function hasFilesInDataTransfer(dt: DataTransfer | null): boolean {
+    if (!dt) return false;
+    if (dt.items && dt.items.length > 0) {
+      return Array.from(dt.items).some((item) => item.kind === "file");
+    }
+    if (dt.files && dt.files.length > 0) return true;
+    return Array.from(dt.types).includes("Files");
+  }
+
+  function handleRootDragEnter(e: DragEvent) {
+    if (!hasFilesInDataTransfer(e.dataTransfer)) return;
+    e.preventDefault();
+    dragDepth += 1;
+    dragOverlayActive = true;
+  }
+
+  function handleRootDragOver(e: DragEvent) {
+    if (!hasFilesInDataTransfer(e.dataTransfer)) return;
+    e.preventDefault();
+    dragOverlayActive = true;
+  }
+
+  function handleRootDragLeave(e: DragEvent) {
+    if (!hasFilesInDataTransfer(e.dataTransfer)) return;
+    e.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) {
+      dragOverlayActive = false;
+    }
+  }
+
+  function handleRootDrop(e: DragEvent) {
+    if (!hasFilesInDataTransfer(e.dataTransfer)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    dragOverlayActive = false;
+    if (!e.dataTransfer?.files?.length) return;
+    void addFilesToStage(e.dataTransfer.files);
   }
 
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
@@ -215,6 +379,12 @@
     isSwiping = false;
   }
 
+  function autoResize() {
+    if (!textareaEl) return;
+    textareaEl.style.height = "auto";
+    textareaEl.style.height = textareaEl.scrollHeight + "px";
+  }
+
   function handleTouchMove(msgId: string, e: TouchEvent) {
     if (swipeMessageId !== msgId) return;
     if (e.touches.length !== 1) return;
@@ -241,7 +411,7 @@
     swipeCurrentX = touch.clientX;
   }
 
-  function handleTouchEnd(msgId: string, e: TouchEvent) {
+  function handleTouchEnd(msgId: string, _: TouchEvent) {
     if (swipeMessageId !== msgId) return;
 
     const deltaX = swipeCurrentX - swipeStartX;
@@ -271,6 +441,102 @@
     };
     window.addEventListener("click", handler);
     return () => window.removeEventListener("click", handler);
+  });
+
+  $effect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const files = e.clipboardData?.files;
+      if (!files || files.length === 0) return;
+      e.preventDefault();
+      void addFilesToStage(files);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  });
+
+  $effect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (stagedFiles.length === 0) return;
+      e.preventDefault();
+      clearStagedFiles();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  $effect(() => {
+    const onWindowDragEnter = (e: DragEvent) => {
+      if (!hasFilesInDataTransfer(e.dataTransfer)) return;
+      e.preventDefault();
+      dragDepth += 1;
+      dragOverlayActive = true;
+    };
+    const onWindowDragOver = (e: DragEvent) => {
+      if (!hasFilesInDataTransfer(e.dataTransfer)) return;
+      e.preventDefault();
+      dragOverlayActive = true;
+    };
+    const onWindowDragLeave = (e: DragEvent) => {
+      if (!hasFilesInDataTransfer(e.dataTransfer)) return;
+      e.preventDefault();
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) dragOverlayActive = false;
+    };
+    const onWindowDrop = (e: DragEvent) => {
+      if (!hasFilesInDataTransfer(e.dataTransfer)) return;
+      e.preventDefault();
+      if (e.dataTransfer?.files?.length) {
+        void addFilesToStage(e.dataTransfer.files);
+      }
+      dragDepth = 0;
+      dragOverlayActive = false;
+    };
+
+    window.addEventListener("dragenter", onWindowDragEnter);
+    window.addEventListener("dragover", onWindowDragOver);
+    window.addEventListener("dragleave", onWindowDragLeave);
+    window.addEventListener("drop", onWindowDrop);
+
+    return () => {
+      window.removeEventListener("dragenter", onWindowDragEnter);
+      window.removeEventListener("dragover", onWindowDragOver);
+      window.removeEventListener("dragleave", onWindowDragLeave);
+      window.removeEventListener("drop", onWindowDrop);
+    };
+  });
+
+  $effect(() => {
+    const nextMap = new Map(stagedPreviewUrls);
+    const activeKeys = new Set<string>();
+
+    for (const file of stagedFiles) {
+      if (!isPreviewable(file)) continue;
+      const key = fileKey(file);
+      activeKeys.add(key);
+      if (!nextMap.has(key)) {
+        nextMap.set(key, URL.createObjectURL(file));
+      }
+    }
+
+    for (const [key, url] of nextMap) {
+      if (activeKeys.has(key)) continue;
+      URL.revokeObjectURL(url);
+      nextMap.delete(key);
+    }
+
+    const changed =
+      nextMap.size !== stagedPreviewUrls.size ||
+      [...nextMap.entries()].some(([k, v]) => stagedPreviewUrls.get(k) !== v);
+    if (changed) stagedPreviewUrls = nextMap;
+  });
+
+  $effect(() => {
+    return () => {
+      for (const url of stagedPreviewUrls.values()) {
+        URL.revokeObjectURL(url);
+      }
+    };
   });
 
   $effect(() => {
@@ -330,16 +596,27 @@
       peerNames.get(msg.senderId) || msg.senderName || msg.senderId.slice(0, 8)
     );
   }
-
-  function isGifUrl(text: string): boolean {
-    return (
-      /^https?:\/\/.+\.(gif|webp)(\?.*)?$/i.test(text) ||
-      /klipy\.co|tenor\.com|giphy\.com/i.test(text)
-    );
-  }
 </script>
 
-<div class="flex h-dvh flex-col bg-background text-foreground font-mono">
+<div
+  class="relative flex h-dvh flex-col bg-background text-foreground font-mono"
+  role="main"
+  ondragenter={handleRootDragEnter}
+  ondragover={handleRootDragOver}
+  ondragleave={handleRootDragLeave}
+  ondrop={handleRootDrop}
+>
+  {#if dragOverlayActive}
+    <div
+      class="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-background/85 backdrop-blur-sm border-2 border-dashed border-primary/60"
+    >
+      <div
+        class="rounded-lg bg-card/90 px-4 py-2 text-sm text-foreground shadow-lg"
+      >
+        Drop files to attach
+      </div>
+    </div>
+  {/if}
   <header class="border-b border-border px-4 py-3 shrink-0">
     <div class="flex items-center justify-between gap-2">
       <div class="flex items-center gap-2 min-w-0">
@@ -438,7 +715,6 @@
           {@const showDate = shouldShowDateSep(msg.timestamp, prev?.timestamp)}
           {@const showHeader = shouldShowHeader(msg, prev)}
           {@const isOwn = msg.senderId === selfId()}
-          {@const isGif = isGifUrl(msg.content)}
           <div>
             {#if showDate}
               <div class="flex items-center gap-3 py-3">
@@ -526,18 +802,12 @@
                   </div>
                 </div>
               {/if}
-              <div class="ml-9 text-sm text-foreground wrap-break-word">
-                {#if isGif}
-                  <img
-                    src={msg.content}
-                    alt="GIF"
-                    class="max-w-xs max-h-48 rounded-md mt-1 object-contain"
-                    loading="lazy"
-                  />
-                {:else}
-                  <p class="whitespace-pre-wrap">{msg.content}</p>
-                {/if}
-              </div>
+              <MsgRender
+                {msg}
+                {isOwn}
+                {fileTransfers}
+                onRequestFileDownload={requestFileDownload}
+              />
 
               {#if reactionsByMessage.get(msg.id)?.size}
                 <div class="ml-9 mt-1 flex items-center gap-1">
@@ -617,7 +887,7 @@
   </div>
 
   {#if !autoScroll && visibleMessages.length > 0}
-    <div class="flex justify-center -mt-10 relative z-10">
+    <div class="flex justify-center -mt-10 relative z-10 mb-2">
       <Button
         variant="secondary"
         size="sm"
@@ -627,7 +897,9 @@
           autoScroll = true;
         }}
       >
-        New messages below
+        <ArrowDown class="size-3" /> New messages below <ArrowDown
+          class="size-3"
+        />
       </Button>
     </div>
   {/if}
@@ -661,8 +933,58 @@
     </div>
   {/if}
 
+  {#if stagedFiles.length > 0}
+    <div class="border-t border-border bg-muted/30 px-4 py-2">
+      <div class="flex gap-2 overflow-x-auto pb-1">
+        {#each stagedFiles as file (fileKey(file))}
+          {@const previewUrl = getStagedPreviewURL(file)}
+          <div
+            class="group relative shrink-0 rounded-md border border-border/70 bg-background/80 p-1.5"
+          >
+            <button
+              type="button"
+              class="absolute right-2 top-1 z-10 hidden size-5 items-center justify-center rounded-full bg-black/70 text-white group-hover:inline-flex"
+              aria-label="Remove file"
+              onclick={() => removeStagedFile(file)}
+            >
+              <X class="size-3" />
+            </button>
+
+            {#if previewUrl && file.type.startsWith("image/")}
+              <img
+                src={previewUrl}
+                alt={file.name}
+                class="h-16 w-16 rounded object-cover"
+              />
+            {:else if previewUrl && file.type.startsWith("video/")}
+              <!-- svelte-ignore a11y_media_has_caption -->
+              <video
+                src={previewUrl}
+                class="h-16 w-16 rounded object-cover"
+                muted
+                playsinline
+              ></video>
+            {:else}
+              <div
+                class="flex h-16 w-28 items-center gap-2 rounded bg-muted px-2"
+              >
+                <FileText class="size-4 shrink-0 text-muted-foreground" />
+                <div class="min-w-0">
+                  <p class="truncate text-xs text-foreground">{file.name}</p>
+                  <p class="text-[10px] text-muted-foreground">
+                    {formatSize(file.size)}
+                  </p>
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   <div
-    class="border-t border-border p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shrink-0"
+    class="border-t border-border p-4 pb-[max(1rem,env(safe-area-inset-bottom))] min-h-18.75 bg-background"
   >
     <form
       onsubmit={(e) => {
@@ -671,28 +993,56 @@
       }}
       class="flex gap-2"
     >
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        onclick={() => (gifPickerOpen = true)}
-        aria-label="Send a GIF"
-        class="size-10 shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
-      >
-        <ImagePlay class="size-4" />
-      </Button>
-      <textarea
-        bind:this={textareaEl}
-        bind:value={draft}
-        onkeydown={handleKeydown}
-        placeholder="Type a message…"
-        rows={1}
-        class="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring min-h-10 max-h-30"
-      ></textarea>
+      <input
+        bind:this={fileInputEl}
+        type="file"
+        multiple
+        class="hidden"
+        onchange={(e) => {
+          const target = e.currentTarget as HTMLInputElement;
+          if (target.files?.length) void addFilesToStage(target.files);
+          target.value = "";
+        }}
+      />
+      <div class="relative flex w-full items-center">
+        <textarea
+          bind:this={textareaEl}
+          bind:value={draft}
+          onkeydown={handleKeydown}
+          oninput={autoResize}
+          placeholder="Type a message…"
+          rows={1}
+          class="w-full resize-none rounded-md border border-input bg-background pl-3 pr-20 py-2 text-sm text-foreground placeholder:text-muted-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring min-h-10 max-h-30 overflow-y-auto"
+        ></textarea>
+        <div
+          class="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1"
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onclick={() => fileInputEl?.click()}
+            aria-label="Attach files"
+            class="size-8 shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
+          >
+            <Paperclip class="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onclick={() => (gifPickerOpen = true)}
+            aria-label="Send a GIF"
+            class="size-8 shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
+          >
+            <ImagePlay class="size-4" />
+          </Button>
+        </div>
+      </div>
       <Button
         type="submit"
         size="icon"
-        disabled={!draft.trim()}
+        disabled={!draft.trim() && stagedFiles.length === 0}
         aria-label="Send message"
         class="size-11 sm:size-10 shrink-0 bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-30"
       >

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { X } from "@lucide/svelte";
   import {
     Dialog,
     DialogContent,
@@ -286,7 +285,7 @@
           <SelectTrigger
             class="bg-background border-input font-mono text-sm focus:ring-ring"
           >
-            <span class="block max-w-[260px] truncate">
+            <span class="block max-w-65 truncate">
               {outputDevices.find((d) => d.deviceId === activeOutput)?.label ||
                 "Default"}
             </span>
@@ -294,7 +293,7 @@
           <SelectContent class="bg-popover border-border font-mono">
             {#each outputDevices as dev (dev.deviceId)}
               <SelectItem value={dev.deviceId} class="font-mono text-sm">
-                <span class="block max-w-[260px] truncate">
+                <span class="block max-w-65 truncate">
                   {dev.label || `Speaker ${dev.deviceId.slice(0, 8)}`}
                 </span>
               </SelectItem>

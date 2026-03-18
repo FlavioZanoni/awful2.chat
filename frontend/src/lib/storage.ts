@@ -304,6 +304,13 @@ export async function getAttachmentsByMessage(
   return database.getAllFromIndex("attachments", "byMessage", messageId);
 }
 
+export async function getAttachmentsByInfoHash(
+  infoHash: string
+): Promise<Attachment[]> {
+  const database = await getDB();
+  return database.getAllFromIndex("attachments", "byInfoHash", infoHash);
+}
+
 export async function getSeedableAttachments(): Promise<Attachment[]> {
   const database = await getDB();
   const complete = await database.getAllFromIndex(
@@ -312,6 +319,19 @@ export async function getSeedableAttachments(): Promise<Attachment[]> {
     "complete"
   );
   return complete.filter((a) => !!a.data);
+}
+
+export async function getAttachmentsWithData(roomCode: string): Promise<Attachment[]> {
+  const database = await getDB();
+  const all = await database.getAllFromIndex("attachments", "byStatus", "complete");
+  const maybeSeeding = await database.getAllFromIndex(
+    "attachments",
+    "byStatus",
+    "seeding"
+  );
+  return [...all, ...maybeSeeding].filter(
+    (attachment) => attachment.roomCode === roomCode && !!attachment.data
+  );
 }
 
 export async function putAttachment(attachment: Attachment): Promise<void> {

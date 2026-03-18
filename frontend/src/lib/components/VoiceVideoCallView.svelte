@@ -384,13 +384,16 @@
   function startHideTimer() {
     if (dockedControls) return;
     clearTimer();
-    hideTimer = setTimeout(() => {
-      if (adjustingTransmissionVolume) {
-        startHideTimer();
-        return;
-      }
-      if (isSmallScreen || !hoveringControls) controlsVisible = false;
-    }, isSmallScreen ? 1200 : 1800);
+    hideTimer = setTimeout(
+      () => {
+        if (adjustingTransmissionVolume) {
+          startHideTimer();
+          return;
+        }
+        if (isSmallScreen || !hoveringControls) controlsVisible = false;
+      },
+      isSmallScreen ? 1200 : 1800
+    );
   }
 
   function showControls() {
@@ -679,8 +682,10 @@
       aria-label="Call controls"
       class={cn(
         "transition-all duration-300 absolute left-1/2 -translate-x-1/2 z-20",
-        isSmallScreen ? "bottom-2 w-[calc(100%-1rem)] max-w-[30rem]" : "bottom-4",
-        !dockedControls && !controlsVisible && "opacity-0 pointer-events-none translate-y-4"
+        isSmallScreen ? "bottom-2 w-[calc(100%-1rem)] max-w-120" : "bottom-4",
+        !dockedControls &&
+          !controlsVisible &&
+          "opacity-0 pointer-events-none translate-y-4"
       )}
       onmouseenter={() => {
         if (isSmallScreen) return;
@@ -696,7 +701,9 @@
       {#if isSmallScreen}
         <div class="grid grid-cols-3 items-center gap-2">
           <div class="flex justify-start">
-            <div class="flex gap-2 rounded-xl border border-white/10 bg-zinc-900/95 px-2.5 py-2">
+            <div
+              class="flex gap-2 rounded-xl border border-white/10 bg-zinc-900/95 px-2.5 py-2"
+            >
               <button
                 type="button"
                 onclick={toggleMute}
@@ -733,7 +740,9 @@
                 aria-label={screenSharing
                   ? "Stop transmission"
                   : "Start transmission"}
-                title={screenSharing ? "Stop transmission" : "Start transmission"}
+                title={screenSharing
+                  ? "Stop transmission"
+                  : "Start transmission"}
                 class="flex group relative h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 shrink-0
                   {screenSharing
                   ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
@@ -761,7 +770,9 @@
 
           <div class="flex justify-end">
             {#if isWatchingTransmission}
-              <div class="relative flex items-center gap-2 rounded-xl border border-white/10 bg-zinc-900/95 px-2 py-2">
+              <div
+                class="relative flex items-center gap-2 rounded-xl border border-white/10 bg-zinc-900/95 px-2 py-2"
+              >
                 <button
                   type="button"
                   onclick={stopWatchingTransmission}
@@ -791,7 +802,9 @@
                 </button>
 
                 {#if showTransmissionVolume}
-                  <div class="absolute right-0 bottom-[calc(100%+0.45rem)] w-32 rounded-lg border border-white/10 bg-zinc-900 px-2.5 py-2 shadow-lg">
+                  <div
+                    class="absolute right-0 bottom-[calc(100%+0.45rem)] w-32 rounded-lg border border-white/10 bg-zinc-900 px-2.5 py-2 shadow-lg"
+                  >
                     <Slider
                       type="single"
                       min={0}
@@ -812,7 +825,8 @@
           <div
             class={cn(
               "flex gap-2",
-              !dockedControls && "bg-zinc-900/95 border border-white/10 rounded-xl p-3 py-2"
+              !dockedControls &&
+                "bg-zinc-900/95 border border-white/10 rounded-xl p-3 py-2"
             )}
           >
             <button
@@ -872,14 +886,18 @@
             aria-label="Leave call"
             class={cn(
               "group relative flex items-center justify-center rounded-lg bg-linear-to-br from-red-500 to-red-600 text-white shadow-lg shadow-red-500/30 transition-all duration-200 hover:from-red-400 hover:to-red-500 hover:scale-105 hover:shadow-red-500/50 shrink-0",
-              dockedControls ? "h-8 w-16 md:h-10 md:w-16" : "h-14 w-14 rounded-xl"
+              dockedControls
+                ? "h-8 w-16 md:h-10 md:w-16"
+                : "h-14 w-14 rounded-xl"
             )}
           >
             <PhoneOff class={dockedControls ? "md:size-5 size-4" : "size-5"} />
           </button>
 
           {#if isWatchingTransmission}
-            <div class="relative flex items-center gap-2 rounded-xl bg-zinc-900/95 border border-white/10 p-3 py-2">
+            <div
+              class="relative flex items-center gap-2 rounded-xl bg-zinc-900/95 border border-white/10 p-3 py-2"
+            >
               <button
                 type="button"
                 onclick={stopWatchingTransmission}

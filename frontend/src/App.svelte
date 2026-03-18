@@ -1,8 +1,6 @@
 <script lang="ts">
   import { identityStore, init } from "$lib/identity.svelte";
   import AppView from "$lib/components/AppView.svelte";
-  import ReloadPrompt from "$lib/components/ReloadPrompt.svelte";
-  import InstallPrompt from "$lib/components/InstallPrompt.svelte";
   import Landing from "./Landing.svelte";
 
   let currentRoute = $state<"landing" | "app">("landing");
