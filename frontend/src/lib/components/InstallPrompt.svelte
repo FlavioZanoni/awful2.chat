@@ -4,7 +4,7 @@
   import { Download } from "@lucide/svelte";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { pageStore } from "$lib/pageStore.svelte.js"; // Assuming pageStore exists or similar
+
 
   let open = $state(false);
   let deferredPrompt = $state<BeforeInstallPromptEvent | null>(null);
