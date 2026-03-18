@@ -60,6 +60,3 @@
 {:else}
   <AppView />
 {/if}
-
-<ReloadPrompt />
-<InstallPrompt />

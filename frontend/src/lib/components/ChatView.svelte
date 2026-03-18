@@ -57,6 +57,34 @@
   let gifPickerOpen = $state(false);
   let hasMoreHistory = $state(true);
   let loadingMore = $state(false);
+  let activeMessageId = $state<string | null>(null);
+
+  // Swipe to reply state
+  let swipeStartX = $state(0);
+  let swipeStartY = $state(0);
+  let swipeCurrentX = $state(0);
+  let swipeMessageId = $state<string | null>(null);
+  let isSwiping = $state(false);
+  const SWIPE_THRESHOLD = 100; // Minimum swipe distance to trigger reply (less sensitive)
+  const SWIPE_DEADZONE = 15; // Initial movement before considered a swipe (less sensitive)
+  const SWIPE_MAX_VERTICAL = 24;
+  const SWIPE_DIRECTION_RATIO = 1.25;
+
+  let isMobile = $state(false);
+
+  $effect(() => {
+    if (typeof window === "undefined") return;
+
+    const media = window.matchMedia("(max-width: 639px)");
+    const update = () => {
+      isMobile = media.matches;
+    };
+
+    update();
+    media.addEventListener("change", update);
+
+    return () => media.removeEventListener("change", update);
+  });
 
   const visibleMessages = $derived(
     messages.filter((m) => m.type !== MessageType.Reaction)
@@ -154,6 +182,96 @@
     const { scrollHeight, scrollTop, clientHeight } = messagesEl;
     autoScroll = scrollHeight - scrollTop - clientHeight < 40;
   }
+
+  function handleMessageClick(msgId: string) {
+    if (!isMobile) return;
+    activeMessageId = activeMessageId === msgId ? null : msgId;
+  }
+
+  function handleTouchStart(msgId: string, e: TouchEvent) {
+    if (e.touches.length !== 1) {
+      swipeMessageId = null;
+      isSwiping = false;
+      return;
+    }
+
+    const rowEl = e.currentTarget as HTMLElement | null;
+    if (rowEl) {
+      const rect = rowEl.getBoundingClientRect();
+      const touchX = e.touches[0].clientX;
+      const startsInRightHalf = touchX >= rect.left + rect.width * 0.5;
+      if (!startsInRightHalf) {
+        swipeMessageId = null;
+        isSwiping = false;
+        return;
+      }
+    }
+
+    const touch = e.touches[0];
+    swipeStartX = touch.clientX;
+    swipeStartY = touch.clientY;
+    swipeCurrentX = touch.clientX;
+    swipeMessageId = msgId;
+    isSwiping = false;
+  }
+
+  function handleTouchMove(msgId: string, e: TouchEvent) {
+    if (swipeMessageId !== msgId) return;
+    if (e.touches.length !== 1) return;
+
+    const touch = e.touches[0];
+    const deltaX = touch.clientX - swipeStartX;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(touch.clientY - swipeStartY);
+
+    if (absX <= SWIPE_DEADZONE) return;
+
+    if (deltaX >= 0) {
+      isSwiping = false;
+      return;
+    }
+
+    const mostlyHorizontal = absX > absY * SWIPE_DIRECTION_RATIO;
+    if (!mostlyHorizontal || absY > SWIPE_MAX_VERTICAL) {
+      isSwiping = false;
+      return;
+    }
+
+    isSwiping = true;
+    swipeCurrentX = touch.clientX;
+  }
+
+  function handleTouchEnd(msgId: string, e: TouchEvent) {
+    if (swipeMessageId !== msgId) return;
+
+    const deltaX = swipeCurrentX - swipeStartX;
+
+    // If swiped enough to the left (negative deltaX), trigger reply
+    if (isSwiping && deltaX < -SWIPE_THRESHOLD) {
+      const msg = visibleMessages.find((m) => m.id === msgId);
+      if (msg) {
+        startReply(msg);
+        activeMessageId = null; // Clear active state after reply action
+      }
+    }
+
+    // Reset swipe state
+    swipeMessageId = null;
+    isSwiping = false;
+    swipeCurrentX = 0;
+  }
+
+  $effect(() => {
+    const handler = (e: MouseEvent) => {
+      // If clicking outside of messages area or on a different message, clear active
+      const msgEl = (e.target as HTMLElement).closest('[id^="msg-"]');
+      if (!msgEl) {
+        activeMessageId = null;
+      }
+    };
+    window.addEventListener("click", handler);
+    return () => window.removeEventListener("click", handler);
+  });
 
   $effect(() => {
     messages.length;
@@ -333,9 +451,25 @@
             {/if}
             <div
               id={`msg-${msg.id}`}
-              class="group relative rounded-md px-2 py-0.5 hover:bg-muted/50 {showHeader
-                ? 'mt-3 pt-1'
-                : ''}"
+              class="group relative rounded-md px-2 py-0.5 hover:bg-muted/50 touch-pan-y select-none {swipeMessageId ===
+                msg.id && isSwiping
+                ? 'bg-primary/10'
+                : ''} {showHeader ? 'mt-3 pt-1' : ''}"
+              role="button"
+              tabindex="0"
+              onclick={() => handleMessageClick(msg.id)}
+              onkeydown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleMessageClick(msg.id);
+                }
+              }}
+              ontouchstart={(e) => handleTouchStart(msg.id, e)}
+              ontouchmove={(e) => handleTouchMove(msg.id, e)}
+              ontouchend={(e) => handleTouchEnd(msg.id, e)}
+              style={swipeMessageId === msg.id
+                ? `transform: translateX(${Math.min(0, swipeCurrentX - swipeStartX)}px); transition: ${isSwiping ? "none" : "transform 0.2s ease-out"}`
+                : ""}
             >
               {#if msg.replyTo}
                 <button
@@ -417,7 +551,11 @@
                         class="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs cursor-pointer transition-colors {reacted
                           ? 'border-blue-400/70 bg-blue-500/20 text-blue-200'
                           : 'border-border/80 bg-muted/40 text-muted-foreground hover:text-foreground'}"
-                        onclick={() => toggleReaction?.(msg.id, emoji)}
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          toggleReaction?.(msg.id, emoji);
+                          activeMessageId = null;
+                        }}
                       >
                         <span>{emoji}</span>
                         <span>{users.size}</span>
@@ -427,19 +565,33 @@
                 </div>
               {/if}
 
+              <!-- Swipe indicator for reply -->
+              {#if swipeMessageId === msg.id && isSwiping}
+                <div
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground opacity-70"
+                >
+                  <Reply class="size-5" />
+                </div>
+              {/if}
+
               <div
-                class="absolute right-8 top-0 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"
+                class="absolute right-0 sm:right-8 top-0 -translate-y-1/2 opacity-0 group-hover:opacity-100 {activeMessageId ===
+                msg.id
+                  ? 'opacity-100'
+                  : ''} transition-opacity flex items-center gap-1 pr-1"
               >
                 <button
                   type="button"
                   class="size-7 inline-flex items-center justify-center rounded bg-card border border-border/70 text-muted-foreground hover:text-foreground cursor-pointer"
                   title="React"
                   onclick={(e) => {
+                    e.stopPropagation();
                     if (reactionPickerFor === msg.id) {
                       reactionPickerFor = null;
                     } else {
                       openReactionPicker(msg.id, e as MouseEvent);
                     }
+                    activeMessageId = null;
                   }}
                 >
                   <Smile class="size-3.5" />
@@ -448,7 +600,11 @@
                   type="button"
                   class="size-7 inline-flex items-center justify-center rounded bg-card border border-border/70 text-muted-foreground hover:text-foreground cursor-pointer"
                   title="Reply"
-                  onclick={() => startReply(msg)}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    startReply(msg);
+                    activeMessageId = null;
+                  }}
                 >
                   <Reply class="size-3.5" />
                 </button>
@@ -556,9 +712,14 @@
   open={reactionPickerFor !== null}
   x={emojiPickerPos.x}
   y={emojiPickerPos.y}
-  onClose={() => (reactionPickerFor = null)}
+  onClose={() => {
+    reactionPickerFor = null;
+    activeMessageId = null;
+  }}
   onSelect={(emoji) => {
     if (!reactionPickerFor) return;
     toggleReaction?.(reactionPickerFor, emoji);
+    reactionPickerFor = null;
+    activeMessageId = null;
   }}
 />

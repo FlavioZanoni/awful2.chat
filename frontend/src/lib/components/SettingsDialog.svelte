@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { X } from "@lucide/svelte";
   import {
     Dialog,
     DialogContent,
@@ -7,6 +8,12 @@
   } from "$lib/components/ui/dialog";
   import { Label } from "$lib/components/ui/label";
   import { Slider } from "$lib/components/ui/slider";
+  import {
+    Drawer,
+    DrawerContent,
+    DrawerHeader,
+    DrawerTitle,
+  } from "$lib/components/ui/drawer";
   import {
     Select,
     SelectContent,
@@ -125,246 +132,284 @@
   const profileInitial = $derived(
     (profileStore.nickname || nameValue || "?").charAt(0).toUpperCase()
   );
+
+  const closeHandler = (v: boolean) => {
+    if (!v) onClose();
+  };
+
+  let isMobile = $state(false);
+
+  $effect(() => {
+    if (typeof window === "undefined") return;
+
+    const media = window.matchMedia("(max-width: 639px)");
+
+    const update = () => {
+      isMobile = media.matches;
+    };
+
+    update();
+    media.addEventListener("change", update);
+
+    return () => media.removeEventListener("change", update);
+  });
 </script>
 
-<Dialog
-  bind:open
-  onOpenChange={(v) => {
-    if (!v) onClose();
-  }}
->
-  <DialogContent
-    overlayClass="z-30"
-    class="bg-card border-border text-card-foreground font-mono max-w-md max-h-[90vh] overflow-y-auto z-30"
-  >
-    <DialogHeader>
-      <DialogTitle class="font-mono text-base font-semibold"
-        >Settings</DialogTitle
+{#snippet SettingsContent()}
+  <div class="flex flex-col gap-5 pt-1">
+    <div class="flex flex-col gap-3">
+      <p
+        class="text-xs text-muted-foreground font-mono uppercase tracking-widest"
       >
-    </DialogHeader>
-
-    <div class="flex flex-col gap-5 pt-1">
-      <div class="flex flex-col gap-3">
-        <p
-          class="text-xs text-muted-foreground font-mono uppercase tracking-widest"
+        Profile
+      </p>
+      <div class="flex flex-col items-center gap-3">
+        <button
+          type="button"
+          onclick={() => {
+            avatarDialogOpen = true;
+          }}
+          aria-label="Change avatar"
+          class="relative group flex size-24 items-center justify-center rounded-full overflow-hidden bg-primary/20 ring-2 ring-border hover:ring-primary/60 transition-all cursor-pointer shrink-0"
         >
-          Profile
-        </p>
-        <div class="flex flex-col items-center gap-3">
-          <button
-            type="button"
-            onclick={() => {
-              avatarDialogOpen = true;
-            }}
-            aria-label="Change avatar"
-            class="relative group flex size-24 items-center justify-center rounded-full overflow-hidden bg-primary/20 ring-2 ring-border hover:ring-primary/60 transition-all cursor-pointer shrink-0"
-          >
-            {#if profileStore.avatarUrl}
-              <img
-                src={profileStore.avatarUrl}
-                alt="Avatar"
-                class="size-full object-cover"
-              />
-            {:else}
-              <span
-                class="text-3xl font-semibold text-primary font-mono select-none"
-                >{profileInitial}</span
-              >
-            {/if}
-            <div
-              class="absolute inset-0 rounded-full flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity"
+          {#if profileStore.avatarUrl}
+            <img
+              src={profileStore.avatarUrl}
+              alt="Avatar"
+              class="size-full object-cover"
+            />
+          {:else}
+            <span
+              class="text-3xl font-semibold text-primary font-mono select-none"
+              >{profileInitial}</span
             >
-              <span class="text-white text-[10px] font-mono">edit</span>
-            </div>
-          </button>
-          <Input
-            bind:value={nameValue}
-            onblur={handleNameBlur}
-            onkeydown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-            placeholder="Display name"
-            class="bg-background border-input text-foreground placeholder:text-muted-foreground font-mono focus-visible:ring-ring text-center w-full"
-          />
-        </div>
-      </div>
-
-      <Separator class="bg-border" />
-
-      <div class="flex flex-col gap-2">
-        <Label
-          class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
-          >microphone</Label
-        >
-        {#if inputDevices.length > 0}
-          <Select
-            type="single"
-            value={activeInput ?? undefined}
-            onValueChange={handleInputDeviceChange}
+          {/if}
+          <div
+            class="absolute inset-0 rounded-full flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity"
           >
-            <SelectTrigger
-              class="bg-background border-input font-mono text-sm focus:ring-ring"
-            >
-              <span class="block max-w-65 truncate">
-                {inputDevices.find((d) => d.deviceId === activeInput)?.label ||
-                  "Default"}
-              </span>
-            </SelectTrigger>
-            <SelectContent class="bg-popover border-border font-mono">
-              {#each inputDevices as dev (dev.deviceId)}
-                <SelectItem value={dev.deviceId} class="font-mono text-sm">
-                  <span class="block max-w-65 truncate">
-                    {dev.label || `Microphone ${dev.deviceId.slice(0, 8)}`}
-                  </span>
-                </SelectItem>
-              {/each}
-            </SelectContent>
-          </Select>
-        {:else}
-          <p class="text-xs text-muted-foreground font-mono">
-            join a call to select devices
-          </p>
-        {/if}
-      </div>
-
-      <!-- Input gain -->
-      <div class="flex flex-col gap-2">
-        <div class="flex items-center justify-between">
-          <Label
-            class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
-            >input gain</Label
-          >
-          <span class="text-xs font-mono text-foreground tabular-nums"
-            >{gainToPercent(sliderToGain(inputSlider[0]))}</span
-          >
-        </div>
-        <Slider
-          type="multiple"
-          bind:value={inputSlider}
-          min={0}
-          max={100}
-          step={1}
-          onValueChange={handleInputGainChange}
-          class="w-full"
-        />
-        <div
-          class="flex justify-between text-[10px] text-muted-foreground font-mono"
-        >
-          <span>mute</span>
-          <span>100%</span>
-          <span>250%</span>
-        </div>
-      </div>
-
-      <Separator class="bg-border" />
-
-      <!-- Output device -->
-      <div class="flex flex-col gap-2">
-        <Label
-          class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
-          >speakers</Label
-        >
-        {#if outputDevices.length > 0}
-          <Select
-            type="single"
-            value={activeOutput ?? undefined}
-            onValueChange={handleOutputDeviceChange}
-          >
-            <SelectTrigger
-              class="bg-background border-input font-mono text-sm focus:ring-ring"
-            >
-              <span class="block max-w-[260px] truncate">
-                {outputDevices.find((d) => d.deviceId === activeOutput)
-                  ?.label || "Default"}
-              </span>
-            </SelectTrigger>
-            <SelectContent class="bg-popover border-border font-mono">
-              {#each outputDevices as dev (dev.deviceId)}
-                <SelectItem value={dev.deviceId} class="font-mono text-sm">
-                  <span class="block max-w-[260px] truncate">
-                    {dev.label || `Speaker ${dev.deviceId.slice(0, 8)}`}
-                  </span>
-                </SelectItem>
-              {/each}
-            </SelectContent>
-          </Select>
-        {:else}
-          <p class="text-xs text-muted-foreground font-mono">
-            join a call to select devices
-          </p>
-        {/if}
-      </div>
-
-      <!-- Output volume -->
-      <div class="flex flex-col gap-2">
-        <div class="flex items-center justify-between">
-          <Label
-            class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
-            >output volume</Label
-          >
-          <span class="text-xs font-mono text-foreground tabular-nums"
-            >{gainToPercent(sliderToGain(outputSlider[0]))}</span
-          >
-        </div>
-        <Slider
-          type="multiple"
-          bind:value={outputSlider}
-          min={0}
-          max={100}
-          step={1}
-          onValueChange={handleOutputVolumeChange}
-          class="w-full"
-        />
-        <div
-          class="flex justify-between text-[10px] text-muted-foreground font-mono"
-        >
-          <span>mute</span>
-          <span>100%</span>
-          <span>250%</span>
-        </div>
-      </div>
-
-      <Separator class="bg-border" />
-
-      <div class="flex flex-col gap-2">
-        <Label
-          class="text-xs font-mono text-destructive uppercase tracking-widest"
-          >Danger zone</Label
-        >
-        <p class="text-xs text-muted-foreground font-mono">
-          Permanently erase all local chat text, media, rooms, profiles, and
-          identity data stored in IndexedDB.
-        </p>
-        {#if !confirmErase}
-          <Button
-            variant="destructive"
-            class="w-full font-mono"
-            onclick={() => (confirmErase = true)}
-          >
-            Erase all local data
-          </Button>
-        {:else}
-          <div class="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              class="font-mono"
-              onclick={() => (confirmErase = false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              class="font-mono"
-              onclick={handleEraseLocalData}
-            >
-              Confirm erase
-            </Button>
+            <span class="text-white text-[10px] font-mono">edit</span>
           </div>
-        {/if}
+        </button>
+        <Input
+          bind:value={nameValue}
+          onblur={handleNameBlur}
+          onkeydown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          placeholder="Display name"
+          class="bg-background border-input text-foreground placeholder:text-muted-foreground font-mono focus-visible:ring-ring text-center w-full"
+        />
       </div>
     </div>
-  </DialogContent>
-</Dialog>
+
+    <Separator class="bg-border" />
+
+    <div class="flex flex-col gap-2">
+      <Label
+        class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
+        >microphone</Label
+      >
+      {#if inputDevices.length > 0}
+        <Select
+          type="single"
+          value={activeInput ?? undefined}
+          onValueChange={handleInputDeviceChange}
+        >
+          <SelectTrigger
+            class="bg-background border-input font-mono text-sm focus:ring-ring"
+          >
+            <span class="block max-w-65 truncate">
+              {inputDevices.find((d) => d.deviceId === activeInput)?.label ||
+                "Default"}
+            </span>
+          </SelectTrigger>
+          <SelectContent class="bg-popover border-border font-mono">
+            {#each inputDevices as dev (dev.deviceId)}
+              <SelectItem value={dev.deviceId} class="font-mono text-sm">
+                <span class="block max-w-65 truncate">
+                  {dev.label || `Microphone ${dev.deviceId.slice(0, 8)}`}
+                </span>
+              </SelectItem>
+            {/each}
+          </SelectContent>
+        </Select>
+      {:else}
+        <p class="text-xs text-muted-foreground font-mono">
+          join a call to select devices
+        </p>
+      {/if}
+    </div>
+
+    <!-- Input gain -->
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center justify-between">
+        <Label
+          class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
+          >input gain</Label
+        >
+        <span class="text-xs font-mono text-foreground tabular-nums"
+          >{gainToPercent(sliderToGain(inputSlider[0]))}</span
+        >
+      </div>
+      <Slider
+        type="multiple"
+        bind:value={inputSlider}
+        min={0}
+        max={100}
+        step={1}
+        onValueChange={handleInputGainChange}
+        class="w-full"
+      />
+      <div
+        class="flex justify-between text-[10px] text-muted-foreground font-mono"
+      >
+        <span>mute</span>
+        <span>100%</span>
+        <span>250%</span>
+      </div>
+    </div>
+
+    <Separator class="bg-border" />
+
+    <!-- Output device -->
+    <div class="flex flex-col gap-2">
+      <Label
+        class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
+        >speakers</Label
+      >
+      {#if outputDevices.length > 0}
+        <Select
+          type="single"
+          value={activeOutput ?? undefined}
+          onValueChange={handleOutputDeviceChange}
+        >
+          <SelectTrigger
+            class="bg-background border-input font-mono text-sm focus:ring-ring"
+          >
+            <span class="block max-w-[260px] truncate">
+              {outputDevices.find((d) => d.deviceId === activeOutput)?.label ||
+                "Default"}
+            </span>
+          </SelectTrigger>
+          <SelectContent class="bg-popover border-border font-mono">
+            {#each outputDevices as dev (dev.deviceId)}
+              <SelectItem value={dev.deviceId} class="font-mono text-sm">
+                <span class="block max-w-[260px] truncate">
+                  {dev.label || `Speaker ${dev.deviceId.slice(0, 8)}`}
+                </span>
+              </SelectItem>
+            {/each}
+          </SelectContent>
+        </Select>
+      {:else}
+        <p class="text-xs text-muted-foreground font-mono">
+          join a call to select devices
+        </p>
+      {/if}
+    </div>
+
+    <!-- Output volume -->
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center justify-between">
+        <Label
+          class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
+          >output volume</Label
+        >
+        <span class="text-xs font-mono text-foreground tabular-nums"
+          >{gainToPercent(sliderToGain(outputSlider[0]))}</span
+        >
+      </div>
+      <Slider
+        type="multiple"
+        bind:value={outputSlider}
+        min={0}
+        max={100}
+        step={1}
+        onValueChange={handleOutputVolumeChange}
+        class="w-full"
+      />
+      <div
+        class="flex justify-between text-[10px] text-muted-foreground font-mono"
+      >
+        <span>mute</span>
+        <span>100%</span>
+        <span>250%</span>
+      </div>
+    </div>
+
+    <Separator class="bg-border" />
+
+    <div class="flex flex-col gap-2">
+      <Label
+        class="text-xs font-mono text-destructive uppercase tracking-widest"
+        >Danger zone</Label
+      >
+      <p class="text-xs text-muted-foreground font-mono">
+        Permanently erase all local chat text, media, rooms, profiles, and
+        identity data stored in IndexedDB.
+      </p>
+      {#if !confirmErase}
+        <Button
+          variant="destructive"
+          class="w-full font-mono"
+          onclick={() => (confirmErase = true)}
+        >
+          Erase all local data
+        </Button>
+      {:else}
+        <div class="grid grid-cols-2 gap-2">
+          <Button
+            variant="outline"
+            class="font-mono"
+            onclick={() => (confirmErase = false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            class="font-mono"
+            onclick={handleEraseLocalData}
+          >
+            Confirm erase
+          </Button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/snippet}
+
+{#if isMobile}
+  <Drawer bind:open onOpenChange={closeHandler} direction="bottom">
+    <DrawerContent
+      class="bg-card text-card-foreground border-border max-h-[90vh]"
+    >
+      <DrawerHeader
+        class="px-4 py-3 w-full flex items-center justify-between gap-2"
+      >
+        <DrawerTitle class="font-mono text-base font-semibold"
+          >Settings</DrawerTitle
+        >
+      </DrawerHeader>
+      <div class="overflow-y-auto px-4 pb-4">
+        {@render SettingsContent()}
+      </div>
+    </DrawerContent>
+  </Drawer>
+{:else}
+  <Dialog bind:open onOpenChange={closeHandler}>
+    <DialogContent
+      overlayClass="z-30"
+      class="bg-card border-border text-card-foreground font-mono max-w-md max-h-[90vh] overflow-y-auto z-30"
+    >
+      <DialogHeader>
+        <DialogTitle class="font-mono text-base font-semibold"
+          >Settings</DialogTitle
+        >
+      </DialogHeader>
+      {@render SettingsContent()}
+    </DialogContent>
+  </Dialog>
+{/if}
 
 <AvatarPickerDialog
   open={avatarDialogOpen}

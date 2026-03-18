@@ -20,6 +20,8 @@
     removeRoom,
   } from "$lib/rooms.svelte";
   import { loadProfile } from "$lib/profile.svelte";
+  import ReloadPrompt from "./ReloadPrompt.svelte";
+  import InstallPrompt from "./InstallPrompt.svelte";
 
   const queryClient = new QueryClient();
 
@@ -165,6 +167,8 @@
           <RoomCreateJoin onJoin={handleJoin} error={joinError} />
         {/if}
       </div>
+      <ReloadPrompt />
+      <InstallPrompt />
     </div>
   {/if}
 </QueryClientProvider>

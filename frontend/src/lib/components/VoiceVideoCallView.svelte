@@ -303,8 +303,8 @@
   const gridCols = $derived.by(() => {
     const n = tiles.length;
     if (n <= 1) return "grid-cols-1";
-    if (n <= 4) return "grid-cols-1 sm:grid-cols-2";
-    if (n <= 9) return "grid-cols-2 sm:grid-cols-3";
+    if (n <= 3) return "grid-cols-1 sm:grid-cols-2";
+    if (n <= 7) return "grid-cols-2 sm:grid-cols-3";
     return "grid-cols-2 sm:grid-cols-4";
   });
 
@@ -312,8 +312,7 @@
     const n = tiles.length;
     const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
     const rows = Math.ceil(n / cols);
-    if (!hasActiveVideo) return "h-[15vh] sm:h-[20vh]";
-    return rows <= 1 ? "h-[22.5vh] sm:h-[35vh]" : "h-[45vh] sm:h-[45vh]";
+    return rows <= 1 ? "h-[35vh]" : "h-[45vh]";
   });
 
   // ── Focus ─────────────────────────────────────────────────────────────────
@@ -343,10 +342,30 @@
   let panelEl = $state<HTMLDivElement | null>(null);
   let isFullscreen = $state(false);
   let hoveringControls = $state(false);
+  let isSmallScreen = $state(false);
+  let showTransmissionVolume = $state(false);
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
+  let adjustingTransmissionVolume = $state(false);
+  let transmissionVolumeSettleTimer: ReturnType<typeof setTimeout> | null =
+    null;
 
   // Docked only when there is nothing to watch — pure audio call
   const dockedControls = $derived(!hasActiveVideo && !isWatchingTransmission);
+
+  $effect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 639px)");
+    const update = () => {
+      isSmallScreen = media.matches;
+    };
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  });
+
+  $effect(() => {
+    if (!isWatchingTransmission) showTransmissionVolume = false;
+  });
 
   function clearTimer() {
     if (hideTimer) {
@@ -355,16 +374,39 @@
     }
   }
 
+  function clearTransmissionVolumeSettleTimer() {
+    if (transmissionVolumeSettleTimer) {
+      clearTimeout(transmissionVolumeSettleTimer);
+      transmissionVolumeSettleTimer = null;
+    }
+  }
+
   function startHideTimer() {
+    if (dockedControls) return;
     clearTimer();
     hideTimer = setTimeout(() => {
-      if (!hoveringControls) controlsVisible = false;
-    }, 1600);
+      if (adjustingTransmissionVolume) {
+        startHideTimer();
+        return;
+      }
+      if (isSmallScreen || !hoveringControls) controlsVisible = false;
+    }, isSmallScreen ? 1200 : 1800);
   }
 
   function showControls() {
     controlsVisible = true;
     clearTimer();
+  }
+
+  function handleTransmissionVolumeChange(v: number) {
+    adjustingTransmissionVolume = true;
+    showControls();
+    setTransmissionOutputVolume?.(v);
+    clearTransmissionVolumeSettleTimer();
+    transmissionVolumeSettleTimer = setTimeout(() => {
+      adjustingTransmissionVolume = false;
+      if (!dockedControls) startHideTimer();
+    }, 500);
   }
 
   $effect(() => {
@@ -383,10 +425,15 @@
 
     if (dockedControls) {
       showControls();
+      clearTimer();
       return;
     }
 
     const onMove = () => {
+      showControls();
+      startHideTimer();
+    };
+    const onPointerDown = () => {
       showControls();
       startHideTimer();
     };
@@ -396,13 +443,16 @@
     };
 
     el.addEventListener("mousemove", onMove);
+    el.addEventListener("pointerdown", onPointerDown);
     el.addEventListener("mouseleave", onLeave);
     startHideTimer();
 
     return () => {
       el.removeEventListener("mousemove", onMove);
+      el.removeEventListener("pointerdown", onPointerDown);
       el.removeEventListener("mouseleave", onLeave);
       clearTimer();
+      clearTransmissionVolumeSettleTimer();
     };
   });
 
@@ -497,7 +547,7 @@
     <!-- Name badge -->
     {#if !isPendingTx}
       <div
-        class="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5"
+        class="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 pointer-events-none"
       >
         {#if tile.kind === "screen" || tile.kind === "transmission"}
           <MonitorIcon class="size-3 text-white" />
@@ -627,129 +677,252 @@
     <div
       role="group"
       aria-label="Call controls"
-      class="flex items-center gap-4 transition-all duration-300 absolute bottom-4 left-1/2 -translate-x-1/2 z-10
-    {!dockedControls && !controlsVisible
-        ? 'opacity-0 pointer-events-none translate-y-4'
-        : ''}"
+      class={cn(
+        "transition-all duration-300 absolute left-1/2 -translate-x-1/2 z-20",
+        isSmallScreen ? "bottom-2 w-[calc(100%-1rem)] max-w-[30rem]" : "bottom-4",
+        !dockedControls && !controlsVisible && "opacity-0 pointer-events-none translate-y-4"
+      )}
       onmouseenter={() => {
+        if (isSmallScreen) return;
         hoveringControls = true;
         showControls();
       }}
       onmouseleave={() => {
+        if (isSmallScreen) return;
         hoveringControls = false;
         if (!dockedControls) startHideTimer();
       }}
     >
-      <div
-        class={cn(
-          "flex gap-2",
-          !dockedControls && "p-3 py-2 bg-zinc-900 rounded-xl"
-        )}
-      >
-        <button
-          type="button"
-          onclick={toggleMute}
-          aria-label={muted ? "Unmute microphone" : "Mute microphone"}
-          class="group relative flex h-10 w-10 items-center justify-center rounded-lg transition-all duration-200
-          {muted
-            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
-            : 'bg-white/10 text-zinc-100 hover:bg-white/20 hover:scale-105'}"
-        >
-          {#if muted}
-            <MicOff class="size-4" />
-          {:else}
-            <Mic class="size-4" />
-          {/if}
-        </button>
-        <button
-          type="button"
-          onclick={toggleCamera}
-          aria-label={cameraOff ? "Turn on camera" : "Turn off camera"}
-          class="group relative flex h-10 w-10 items-center justify-center rounded-lg transition-all duration-200
-            {!cameraOff
-            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
-            : 'bg-white/10 text-zinc-100 hover:bg-white/20 hover:scale-105'}"
-        >
-          {#if cameraOff}
-            <Camera class="size-4" />
-          {:else}
-            <CameraOff class="size-4" />
-          {/if}
-        </button>
+      {#if isSmallScreen}
+        <div class="grid grid-cols-3 items-center gap-2">
+          <div class="flex justify-start">
+            <div class="flex gap-2 rounded-xl border border-white/10 bg-zinc-900/95 px-2.5 py-2">
+              <button
+                type="button"
+                onclick={toggleMute}
+                aria-label={muted ? "Unmute microphone" : "Mute microphone"}
+                class="group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 shrink-0
+                {muted
+                  ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
+                  : 'bg-white/10 text-zinc-100 hover:bg-white/20'}"
+              >
+                {#if muted}
+                  <MicOff class="size-4" />
+                {:else}
+                  <Mic class="size-4" />
+                {/if}
+              </button>
+              <button
+                type="button"
+                onclick={toggleCamera}
+                aria-label={cameraOff ? "Turn on camera" : "Turn off camera"}
+                class="group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 shrink-0
+                  {!cameraOff
+                  ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
+                  : 'bg-white/10 text-zinc-100 hover:bg-white/20'}"
+              >
+                {#if cameraOff}
+                  <Camera class="size-4" />
+                {:else}
+                  <CameraOff class="size-4" />
+                {/if}
+              </button>
+              <button
+                type="button"
+                onclick={screenSharing ? stopScreenShare : startScreenShare}
+                aria-label={screenSharing
+                  ? "Stop transmission"
+                  : "Start transmission"}
+                title={screenSharing ? "Stop transmission" : "Start transmission"}
+                class="flex group relative h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 shrink-0
+                  {screenSharing
+                  ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
+                  : 'bg-white/10 text-zinc-100 hover:bg-white/20'}"
+              >
+                {#if screenSharing}
+                  <MonitorOff class="size-4" />
+                {:else}
+                  <Monitor class="size-4" />
+                {/if}
+              </button>
+            </div>
+          </div>
 
-        <button
-          type="button"
-          onclick={screenSharing ? stopScreenShare : startScreenShare}
-          aria-label={screenSharing
-            ? "Stop transmission"
-            : "Start transmission"}
-          title={screenSharing ? "Stop transmission" : "Start transmission"}
-          class="hidden sm:flex group relative h-10 w-10 items-center justify-center rounded-lg transition-all duration-200
-            {screenSharing
-            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
-            : 'bg-white/10 text-zinc-100 hover:bg-white/20 hover:scale-105'}"
-        >
-          {#if screenSharing}
-            <MonitorOff class="size-4" />
-          {:else}
-            <Monitor class="size-4" />
-          {/if}
-        </button>
-      </div>
-
-      <button
-        type="button"
-        onclick={leaveCall}
-        aria-label="Leave call"
-        class={cn(
-          "group relative flex w-16 h-10 items-center justify-center rounded-lg bg-linear-to-br from-red-500 to-red-600 text-white shadow-lg shadow-red-500/30 transition-all duration-200 hover:from-red-400 hover:to-red-500 hover:scale-105 hover:shadow-red-500/50",
-          !dockedControls && "h-12 px-6 w-20"
-        )}
-      >
-        <PhoneOff class="size-5" />
-      </button>
-      <!-- Transmission controls -->
-      {#if isWatchingTransmission}
-        <div class="flex items-center gap-2 p-3 py-2 bg-zinc-900 rounded-xl">
-          <button
-            type="button"
-            onclick={stopWatchingTransmission}
-            aria-label="Stop watching transmission"
-            title="Stop watching transmission"
-            class="flex h-10 w-10 items-center justify-center rounded-lg bg-red-500/20 text-red-400 transition-all duration-200 hover:bg-red-500/30 ring-1 ring-red-500/50"
-          >
-            <Radio class="size-4" />
-          </button>
-          <div class="flex items-center gap-2 px-1">
+          <div class="flex justify-center">
             <button
               type="button"
-              onclick={() =>
-                setTransmissionOutputVolume?.(
-                  transmissionOutputVolume === 0 ? 1 : 0
-                )}
-              aria-label={transmissionOutputVolume === 0
-                ? "Unmute transmission"
-                : "Mute transmission"}
-              class="flex items-center justify-center text-zinc-400 hover:text-zinc-100 transition-colors"
+              onclick={leaveCall}
+              aria-label="Leave call"
+              class="group relative flex h-8 w-14 items-center justify-center rounded-lg bg-linear-to-br from-red-500 to-red-600 text-white shadow-lg shadow-red-500/30 transition-all duration-200 hover:from-red-400 hover:to-red-500"
             >
-              {#if transmissionOutputVolume === 0}
-                <VolumeX class="size-4 shrink-0" />
-              {:else if transmissionOutputVolume < 1}
-                <Volume1 class="size-4 shrink-0" />
+              <PhoneOff class="size-4" />
+            </button>
+          </div>
+
+          <div class="flex justify-end">
+            {#if isWatchingTransmission}
+              <div class="relative flex items-center gap-2 rounded-xl border border-white/10 bg-zinc-900/95 px-2 py-2">
+                <button
+                  type="button"
+                  onclick={stopWatchingTransmission}
+                  aria-label="Stop watching transmission"
+                  title="Stop watching transmission"
+                  class="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/20 text-red-400 transition-all duration-200 hover:bg-red-500/30 ring-1 ring-red-500/50"
+                >
+                  <Radio class="size-4" />
+                </button>
+                <button
+                  type="button"
+                  onclick={() => {
+                    showTransmissionVolume = !showTransmissionVolume;
+                  }}
+                  aria-label={transmissionOutputVolume === 0
+                    ? "Unmute transmission"
+                    : "Mute transmission"}
+                  class="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-100 transition-colors"
+                >
+                  {#if transmissionOutputVolume === 0}
+                    <VolumeX class="size-4 shrink-0" />
+                  {:else if transmissionOutputVolume < 1}
+                    <Volume1 class="size-4 shrink-0" />
+                  {:else}
+                    <Volume2 class="size-4 shrink-0" />
+                  {/if}
+                </button>
+
+                {#if showTransmissionVolume}
+                  <div class="absolute right-0 bottom-[calc(100%+0.45rem)] w-32 rounded-lg border border-white/10 bg-zinc-900 px-2.5 py-2 shadow-lg">
+                    <Slider
+                      type="single"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={transmissionOutputVolume}
+                      onValueChange={handleTransmissionVolumeChange}
+                      class="w-full"
+                    />
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        </div>
+      {:else}
+        <div class="flex items-end gap-4">
+          <div
+            class={cn(
+              "flex gap-2",
+              !dockedControls && "bg-zinc-900/95 border border-white/10 rounded-xl p-3 py-2"
+            )}
+          >
+            <button
+              type="button"
+              onclick={toggleMute}
+              aria-label={muted ? "Unmute microphone" : "Mute microphone"}
+              class="group relative flex h-8 w-8 md:h-10 md:w-10 items-center justify-center rounded-lg transition-all duration-200 shrink-0
+              {muted
+                ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
+                : 'bg-white/10 text-zinc-100 hover:bg-white/20 hover:scale-105'}"
+            >
+              {#if muted}
+                <MicOff class="size-4" />
               {:else}
-                <Volume2 class="size-4 shrink-0" />
+                <Mic class="size-4" />
               {/if}
             </button>
-            <Slider
-              type="single"
-              min={0}
-              max={1}
-              step={0.05}
-              value={transmissionOutputVolume}
-              onValueChange={(v: number) => setTransmissionOutputVolume?.(v)}
-              class="w-24"
-            />
+            <button
+              type="button"
+              onclick={toggleCamera}
+              aria-label={cameraOff ? "Turn on camera" : "Turn off camera"}
+              class="group relative flex h-8 w-8 md:h-10 md:w-10 items-center justify-center rounded-lg transition-all duration-200 shrink-0
+                {!cameraOff
+                ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
+                : 'bg-white/10 text-zinc-100 hover:bg-white/20 hover:scale-105'}"
+            >
+              {#if cameraOff}
+                <Camera class="size-4" />
+              {:else}
+                <CameraOff class="size-4" />
+              {/if}
+            </button>
+
+            <button
+              type="button"
+              onclick={screenSharing ? stopScreenShare : startScreenShare}
+              aria-label={screenSharing
+                ? "Stop transmission"
+                : "Start transmission"}
+              title={screenSharing ? "Stop transmission" : "Start transmission"}
+              class="flex group relative h-8 w-8 md:h-10 md:w-10 items-center justify-center rounded-lg transition-all duration-200 shrink-0
+                {screenSharing
+                ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
+                : 'bg-white/10 text-zinc-100 hover:bg-white/20 hover:scale-105'}"
+            >
+              {#if screenSharing}
+                <MonitorOff class="size-4" />
+              {:else}
+                <Monitor class="size-4" />
+              {/if}
+            </button>
           </div>
+
+          <button
+            type="button"
+            onclick={leaveCall}
+            aria-label="Leave call"
+            class={cn(
+              "group relative flex items-center justify-center rounded-lg bg-linear-to-br from-red-500 to-red-600 text-white shadow-lg shadow-red-500/30 transition-all duration-200 hover:from-red-400 hover:to-red-500 hover:scale-105 hover:shadow-red-500/50 shrink-0",
+              dockedControls ? "h-8 w-16 md:h-10 md:w-16" : "h-14 w-14 rounded-xl"
+            )}
+          >
+            <PhoneOff class={dockedControls ? "md:size-5 size-4" : "size-5"} />
+          </button>
+
+          {#if isWatchingTransmission}
+            <div class="relative flex items-center gap-2 rounded-xl bg-zinc-900/95 border border-white/10 p-3 py-2">
+              <button
+                type="button"
+                onclick={stopWatchingTransmission}
+                aria-label="Stop watching transmission"
+                title="Stop watching transmission"
+                class="flex h-10 w-10 items-center justify-center rounded-lg bg-red-500/20 text-red-400 transition-all duration-200 hover:bg-red-500/30 ring-1 ring-red-500/50"
+              >
+                <Radio class="size-4" />
+              </button>
+              <div class="flex items-center gap-2 px-1">
+                <button
+                  type="button"
+                  onclick={() =>
+                    setTransmissionOutputVolume?.(
+                      transmissionOutputVolume === 0 ? 1 : 0
+                    )}
+                  aria-label={transmissionOutputVolume === 0
+                    ? "Unmute transmission"
+                    : "Mute transmission"}
+                  class="flex items-center justify-center text-zinc-400 hover:text-zinc-100 transition-colors"
+                >
+                  {#if transmissionOutputVolume === 0}
+                    <VolumeX class="size-4 shrink-0" />
+                  {:else if transmissionOutputVolume < 1}
+                    <Volume1 class="size-4 shrink-0" />
+                  {:else}
+                    <Volume2 class="size-4 shrink-0" />
+                  {/if}
+                </button>
+                <div class="w-24">
+                  <Slider
+                    type="single"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={transmissionOutputVolume}
+                    onValueChange={handleTransmissionVolumeChange}
+                    class="w-24"
+                  />
+                </div>
+              </div>
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
@@ -759,7 +932,7 @@
       onclick={toggleFullscreen}
       aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
       title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-      class="absolute right-3 top-1/2 -translate-y-1/2 sm:right-4 sm:top-auto sm:bottom-4 sm:translate-y-0 flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-lg bg-zinc-900 text-zinc-300 transition-all duration-200 hover:bg-zinc-900 hover:scale-105 z-20"
+      class="absolute top-3 right-3 sm:top-4 sm:right-4 flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-lg bg-zinc-900 text-zinc-300 transition-all duration-200 hover:bg-zinc-900 hover:scale-105 z-20"
     >
       {#if isFullscreen}
         <Minimize class="size-4" />
