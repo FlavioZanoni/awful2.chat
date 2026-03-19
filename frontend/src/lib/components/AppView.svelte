@@ -260,30 +260,18 @@
       <ReloadPrompt />
       <InstallPrompt />
 
-      {#if isMobile}
-        <Drawer
-          open={createJoinOpen}
-          onOpenChange={(v) => (createJoinOpen = v)}
-          direction="bottom"
-        >
-          <DrawerContent class="bg-transparent">
+      <Dialog.Root bind:open={createJoinOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay
+            class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+          />
+          <Dialog.Content
+            class="fixed w-sm top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 p-0 border-0 [&>div]:bg-transparent [&>div]:min-h-0 [&>div]:p-0"
+          >
             <RoomCreateJoin onJoin={handleJoinFromModal} error={joinError} />
-          </DrawerContent>
-        </Drawer>
-      {:else}
-        <Dialog.Root bind:open={createJoinOpen}>
-          <Dialog.Portal>
-            <Dialog.Overlay
-              class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
-            />
-            <Dialog.Content
-              class="fixed w-sm top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 p-0 border-0 [&>div]:bg-transparent [&>div]:min-h-0 [&>div]:p-0"
-            >
-              <RoomCreateJoin onJoin={handleJoinFromModal} error={joinError} />
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
-      {/if}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   {/if}
 </QueryClientProvider>
