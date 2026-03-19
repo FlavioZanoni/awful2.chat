@@ -49,7 +49,7 @@ interface KlipyResponse {
 }
 
 const KLIPY_API_BASE =
-  import.meta.env.VITE_API_URL || "https://api.awful.chat/klipy";
+  import.meta.env.VITE_API_URL || "https://awful.frav.in/klipy";
 
 function normalizeGif(item: KlipyResponse["data"]["data"][0]): KlipyGif {
   const file = item.file || {};

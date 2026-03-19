@@ -7,6 +7,7 @@ export enum MessageType {
   // presence — wire only, never persisted
   Profile = "profile",
   CallPresence = "call_presence",
+  CallState = "call_state",
   RoomName = "room_name",
   // sync — wire only, never persisted
   SyncDigest = "sync_digest",
@@ -133,6 +134,12 @@ export interface WireCallPresence {
   inCall: boolean;
 }
 
+export interface WireCallState {
+  type: MessageType.CallState;
+  muted: boolean;
+  deafened: boolean;
+}
+
 export interface WireRoomName {
   type: MessageType.RoomName;
   name: string;
@@ -176,6 +183,7 @@ export type AnyWireMessage =
   | WireChatMessage
   | WireProfile
   | WireCallPresence
+  | WireCallState
   | WireRoomName
   | WireSyncDigest
   | WireSyncBatch

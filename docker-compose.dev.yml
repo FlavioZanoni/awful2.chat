@@ -22,6 +22,7 @@ services:
     environment:
       VITE_SIGNAL_URL: ${PUBLIC_SIGNAL_URL:-http://localhost:8080/signal}
       VITE_SFU_URL: ${PUBLIC_SFU_URL:-http://localhost:3000}
+      VITE_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/klipy}
     depends_on:
       - signal
     networks:

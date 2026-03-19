@@ -6,6 +6,7 @@
   import RoomCreateJoin from "$lib/components/RoomCreateJoin.svelte";
   import ChatView from "$lib/components/ChatView.svelte";
   import RoomSidebar from "$lib/components/RoomSidebar.svelte";
+  import { Drawer, DrawerContent } from "$lib/components/ui/drawer";
   import {
     transportState,
     joinRoom,
@@ -23,6 +24,7 @@
   import { consumeLatestSharedPayload } from "$lib/share-target";
   import ReloadPrompt from "./ReloadPrompt.svelte";
   import InstallPrompt from "./InstallPrompt.svelte";
+  import { Dialog } from "bits-ui";
 
   const queryClient = new QueryClient();
 
@@ -57,6 +59,8 @@
   let lockedView = $state<"unlock" | "restore">("unlock");
   let sidebarOpen = $state(false);
   let joinError = $state<string | null>(null);
+  let createJoinOpen = $state(false);
+  let isMobile = $state(false);
   let incomingSharedFiles = $state<File[]>([]);
   let incomingSharedText = $state("");
 
@@ -120,6 +124,20 @@
     sidebarOpen = false;
   }
 
+  function openCreateJoin() {
+    createJoinOpen = true;
+  }
+
+  async function handleJoinFromModal(
+    roomCode: string,
+    displayName: string,
+    roomName?: string
+  ) {
+    await handleJoin(roomCode, displayName, roomName);
+    createJoinOpen = false;
+    sidebarOpen = false;
+  }
+
   function clearIncomingShared() {
     incomingSharedFiles = [];
     incomingSharedText = "";
@@ -140,6 +158,17 @@
 
   const myId = $derived(selfId());
   const hasSidebar = $derived(roomsStore.rooms.length > 0);
+
+  $effect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 639px)");
+    const update = () => {
+      isMobile = media.matches;
+    };
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  });
 </script>
 
 <svelte:window onpopstate={handlePopState} />
@@ -177,6 +206,7 @@
           onClose={() => (sidebarOpen = false)}
           onSelectRoom={handleSelectRoom}
           onRemoveRoom={handleRemoveRoom}
+          onOpenCreateJoin={openCreateJoin}
         />
       {/if}
       <div class="flex-1 min-w-0">
@@ -229,6 +259,31 @@
       </div>
       <ReloadPrompt />
       <InstallPrompt />
+
+      {#if isMobile}
+        <Drawer
+          open={createJoinOpen}
+          onOpenChange={(v) => (createJoinOpen = v)}
+          direction="bottom"
+        >
+          <DrawerContent class="bg-transparent">
+            <RoomCreateJoin onJoin={handleJoinFromModal} error={joinError} />
+          </DrawerContent>
+        </Drawer>
+      {:else}
+        <Dialog.Root bind:open={createJoinOpen}>
+          <Dialog.Portal>
+            <Dialog.Overlay
+              class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            />
+            <Dialog.Content
+              class="fixed w-sm top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 p-0 border-0 [&>div]:bg-transparent [&>div]:min-h-0 [&>div]:p-0"
+            >
+              <RoomCreateJoin onJoin={handleJoinFromModal} error={joinError} />
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      {/if}
     </div>
   {/if}
 </QueryClientProvider>

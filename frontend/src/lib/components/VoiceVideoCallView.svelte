@@ -25,6 +25,7 @@
     Maximize,
     Minimize,
     Radio,
+    HeadphoneOff,
     Volume2,
     Volume1,
     VolumeX,
@@ -48,6 +49,7 @@
     audioTrack?: MediaStreamTrack | null;
     peerId: string;
     muted?: boolean;
+    deafened?: boolean;
     /** True when this is a screen-share transmission tile that hasn't been joined yet. */
     isPending?: boolean;
     /** The SFU producerId — only set on pending transmission tiles. */
@@ -65,12 +67,24 @@
     localMicStream,
     inCall,
     muted,
+    deafened,
     cameraOff,
     screenSharing,
     pendingTransmissions = new Map<string, string>(),
     watchingTransmissionPeerId = null,
+    callPeerStates = new Map<string, { muted: boolean; deafened: boolean }>(),
     error = null,
   } = $derived(transportState);
+
+  function getPeerLabel(peerId: string): string {
+    const did = peerIdToDid(peerId);
+    return peerNames.get(did) ?? peerNames.get(peerId) ?? peerId.slice(0, 8);
+  }
+
+  function getPeerAvatar(peerId: string): string | null {
+    const did = peerIdToDid(peerId);
+    return peerAvatars.get(did) ?? peerAvatars.get(peerId) ?? null;
+  }
 
   let speakingPeers = $state(new Set<string>());
   const analysers = new Map<
@@ -211,6 +225,7 @@
       videoTrack: localVideoTrack,
       peerId: selfId(),
       muted,
+      deafened,
     });
     for (const peerId of callPeerIds) {
       const p = byPeer.get(peerId) ?? {
@@ -220,9 +235,9 @@
         screenTrack: null,
         screenAudioTrack: null,
       };
-      const did = peerIdToDid(peerId);
-      const label = peerNames.get(did) ?? peerId.slice(0, 8);
-      const avatarUrl = peerAvatars.get(did) ?? null;
+      const label = getPeerLabel(peerId);
+      const avatarUrl = getPeerAvatar(peerId);
+      const remoteCallState = callPeerStates.get(peerId);
       result.push({
         id: `remote-camera-${peerId}`,
         label,
@@ -232,6 +247,8 @@
         videoTrack: p.videoTrack,
         audioTrack: p.audioTrack,
         peerId,
+        muted: remoteCallState?.muted,
+        deafened: remoteCallState?.deafened,
       });
     }
     if (localScreenTrack) {
@@ -247,9 +264,8 @@
     }
     for (const p of byPeer.values()) {
       if (p.screenTrack) {
-        const did = peerIdToDid(p.peerId);
-        const label = peerNames.get(did) ?? p.peerId.slice(0, 8);
-        const avatarUrl = peerAvatars.get(did) ?? null;
+        const label = getPeerLabel(p.peerId);
+        const avatarUrl = getPeerAvatar(p.peerId);
         result.push({
           id: `remote-screen-${p.peerId}`,
           label,
@@ -263,9 +279,8 @@
     }
     // Pending transmission tiles — remote peers sharing their screen (opt-in)
     for (const [peerId, producerId] of pendingTransmissions) {
-      const did = peerIdToDid(peerId);
-      const label = peerNames.get(did) ?? peerId.slice(0, 8);
-      const avatarUrl = peerAvatars.get(did) ?? null;
+      const label = getPeerLabel(peerId);
+      const avatarUrl = getPeerAvatar(peerId);
       result.push({
         id: `pending-tx-${peerId}`,
         label,
@@ -291,11 +306,17 @@
 
   const remoteAudio = $derived.by(() => {
     const tracks: Array<{ id: string; track: MediaStreamTrack }> = [];
+    const seenTrackIds = new Set<string>();
     for (const p of participants.values()) {
-      if (p.audioTrack)
-        tracks.push({ id: `${p.peerId}-voice`, track: p.audioTrack });
-      if (p.screenAudioTrack)
-        tracks.push({ id: `${p.peerId}-screen`, track: p.screenAudioTrack });
+      // VoiceTransport already renders/plays remote voice audio through Web Audio.
+      // Only mount <audio> for screen-share audio tracks here.
+      if (p.screenAudioTrack && !seenTrackIds.has(p.screenAudioTrack.id)) {
+        seenTrackIds.add(p.screenAudioTrack.id);
+        tracks.push({
+          id: `${p.peerId}-screen-${p.screenAudioTrack.id}`,
+          track: p.screenAudioTrack,
+        });
+      }
     }
     return tracks;
   });
@@ -558,7 +579,10 @@
         {#if tile.kind === "camera" && tile.muted}
           <MicOff class="size-3 text-red-400" />
         {/if}
-        <span class="text-[11px] leading-none text-white font-mono">
+        {#if tile.kind === "camera" && tile.deafened}
+          <HeadphoneOff class="size-3 text-amber-300" />
+        {/if}
+        <span class="text-xs mt-0.75 leading-none text-white font-mono">
           {tile.kind === "transmission"
             ? `${tile.label}'s transmission`
             : tile.isLocal
@@ -580,19 +604,30 @@
     <div class="flex-1 flex items-center justify-center">
       <div class="flex items-center gap-1">
         {#each [...callPeerIds] as peerId (peerId)}
-          {@const did = peerIdToDid(peerId)}
+          {@const label = getPeerLabel(peerId)}
+          {@const avatar = getPeerAvatar(peerId)}
+          {@const state = callPeerStates.get(peerId)}
           <div
-            title={peerNames.get(did) ?? peerId}
-            class="flex size-16 sm:size-20 items-center justify-center rounded-full bg-primary/20 text-2xl font-semibold text-primary ring-2 ring-background font-mono overflow-hidden"
+            title={label}
+            class="relative flex size-16 sm:size-20 items-center justify-center rounded-full bg-primary/20 text-2xl font-semibold text-primary ring-2 ring-background font-mono overflow-hidden"
           >
-            {#if peerAvatars.get(did)}
-              <img
-                src={peerAvatars.get(did)}
-                alt={peerNames.get(did) ?? peerId}
-                class="size-full object-cover"
-              />
+            {#if avatar}
+              <img src={avatar} alt={label} class="size-full object-cover" />
             {:else}
-              {(peerNames.get(did) ?? peerId).charAt(0).toUpperCase()}
+              {label.charAt(0).toUpperCase()}
+            {/if}
+
+            {#if state?.muted || state?.deafened}
+              <div
+                class="absolute right-1 bottom-1 inline-flex items-center gap-1 rounded-full bg-black/70 px-1 py-0.5"
+              >
+                {#if state?.muted}
+                  <MicOff class="size-3 text-red-400" />
+                {/if}
+                {#if state?.deafened}
+                  <HeadphoneOff class="size-3 text-amber-300" />
+                {/if}
+              </div>
             {/if}
           </div>
         {/each}

@@ -51,6 +51,19 @@
   let hasMore = $state(true);
   let sentinelEl = $state<HTMLDivElement | undefined>(undefined);
   let observer: IntersectionObserver | undefined;
+  let nextPageBackoffAttempt = $state(0);
+  let nextPageRetryAfter = $state(0);
+
+  const MAX_BACKOFF_MS = 30_000;
+
+  function nextBackoffMs(attempt: number): number {
+    return Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
+  }
+
+  function resetBackoff() {
+    nextPageBackoffAttempt = 0;
+    nextPageRetryAfter = 0;
+  }
 
   async function loadSavedGifs() {
     const gifs = await getAllSavedGifs();
@@ -94,6 +107,25 @@
     }
   }
 
+  async function fetchGifPage(pageNum: number, append = false): Promise<boolean> {
+    if (Date.now() < nextPageRetryAfter) return false;
+
+    try {
+      if (debouncedQuery.trim()) {
+        await loadSearch(debouncedQuery, pageNum, append);
+      } else {
+        await loadTrending(pageNum, append);
+      }
+      resetBackoff();
+      return true;
+    } catch {
+      const delay = nextBackoffMs(nextPageBackoffAttempt);
+      nextPageBackoffAttempt += 1;
+      nextPageRetryAfter = Date.now() + delay;
+      return false;
+    }
+  }
+
   $effect(() => {
     if (open) {
       tab = "saved";
@@ -103,6 +135,7 @@
       hasMore = true;
       popularGifs = [];
       searchResults = [];
+      resetBackoff();
       loadSavedGifs();
     }
   });
@@ -114,7 +147,7 @@
       debouncedQuery === "" &&
       popularGifs.length === 0
     ) {
-      loadTrending(1);
+      void fetchGifPage(1);
     }
   });
 
@@ -126,13 +159,15 @@
       searchResults = [];
       page = 1;
       hasMore = true;
+      resetBackoff();
       return;
     }
     debounceTimer = setTimeout(() => {
       debouncedQuery = val;
       page = 1;
       hasMore = true;
-      loadSearch(val, 1);
+      resetBackoff();
+      void fetchGifPage(1);
     }, 320);
   });
 
@@ -149,12 +184,9 @@
       (entries) => {
         if (entries[0].isIntersecting && !loading && hasMore) {
           const next = page + 1;
-          page = next;
-          if (debouncedQuery.trim()) {
-            loadSearch(debouncedQuery, next, true);
-          } else {
-            loadTrending(next, true);
-          }
+          void fetchGifPage(next, true).then((ok) => {
+            if (ok) page = next;
+          });
         }
       },
       { threshold: 0.1 }
@@ -184,6 +216,7 @@
     page = 1;
     popularGifs = [];
     searchResults = [];
+    resetBackoff();
   }
 
   async function toggleSave(e: MouseEvent, gif: DisplayGif) {
@@ -285,7 +318,7 @@
           size="sm"
           onclick={() => {
             tab = "popular";
-            if (popularGifs.length === 0) loadTrending(1);
+            if (popularGifs.length === 0) void fetchGifPage(1);
           }}
           class="font-mono text-xs cursor-pointer"
         >

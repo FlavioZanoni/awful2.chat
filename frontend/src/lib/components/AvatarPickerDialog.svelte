@@ -36,6 +36,14 @@ import { saveAvatar, profileStore } from "$lib/profile.svelte";
   let dragOver = $state(false);
   let sentinelEl: HTMLDivElement | undefined = $state();
   let observer: IntersectionObserver | undefined;
+  let nextPageBackoffAttempt = $state(0);
+  let nextPageRetryAfter = $state(0);
+
+  const MAX_BACKOFF_MS = 30_000;
+
+  function nextBackoffMs(attempt: number): number {
+    return Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
+  }
 
   function handleSearchInput(e: Event) {
     const val = (e.target as HTMLInputElement).value;
@@ -60,7 +68,24 @@ import { saveAvatar, profileStore } from "$lib/profile.svelte";
       _allPages: KlipyResult[],
       lastPageParam: unknown
     ) => (lastPage.hasMore ? (lastPageParam as number) + 1 : undefined),
+    retry: 4,
+    retryDelay: (attemptIndex) => nextBackoffMs(attemptIndex),
   }));
+
+  async function fetchNextPageWithBackoff() {
+    const now = Date.now();
+    if (now < nextPageRetryAfter) return;
+
+    try {
+      await gifQuery.fetchNextPage();
+      nextPageBackoffAttempt = 0;
+      nextPageRetryAfter = 0;
+    } catch {
+      const delay = nextBackoffMs(nextPageBackoffAttempt);
+      nextPageBackoffAttempt += 1;
+      nextPageRetryAfter = Date.now() + delay;
+    }
+  }
 
   $effect(() => {
     if (!sentinelEl) return;
@@ -70,9 +95,10 @@ import { saveAvatar, profileStore } from "$lib/profile.svelte";
         if (
           entries[0].isIntersecting &&
           gifQuery.hasNextPage &&
-          !gifQuery.isFetchingNextPage
+          !gifQuery.isFetchingNextPage &&
+          !gifQuery.isError
         ) {
-          gifQuery.fetchNextPage();
+          fetchNextPageWithBackoff();
         }
       },
       { threshold: 0.1 }
@@ -84,6 +110,12 @@ import { saveAvatar, profileStore } from "$lib/profile.svelte";
   const allGifs = $derived<KlipyGif[]>(
     gifQuery.data?.pages.flatMap((p) => p.gifs) ?? []
   );
+
+  $effect(() => {
+    debouncedQuery;
+    nextPageBackoffAttempt = 0;
+    nextPageRetryAfter = 0;
+  });
 
   function handleFileChange(e: Event) {
     const file = (e.target as HTMLInputElement).files?.[0];

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Room } from "$lib/storage";
-  import { Hash, MessageSquare, Trash2 } from "@lucide/svelte";
+  import { Hash, MessageSquare, Plus, Trash2 } from "@lucide/svelte";
   import SidebarControls from "./SidebarControls.svelte";
 
   interface Props {
@@ -11,6 +11,7 @@
     onClose?: () => void;
     onSelectRoom: (code: string) => void;
     onRemoveRoom: (code: string) => void;
+    onOpenCreateJoin?: () => void;
   }
 
   let {
@@ -21,6 +22,7 @@
     onClose,
     onSelectRoom,
     onRemoveRoom,
+    onOpenCreateJoin,
   }: Props = $props();
 
   let contextMenu = $state<{ code: string; x: number; y: number } | null>(null);
@@ -44,6 +46,26 @@
     const days = Math.floor(hours / 24);
     return `${days}d ago`;
   }
+
+  let href = $state(window.location.href);
+
+  $effect(() => {
+    const onPop = () => (href = window.location.href);
+
+    const origPush = history.pushState.bind(history);
+    history.pushState = (...args) => {
+      origPush(...args);
+      href = window.location.href;
+    };
+
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      history.pushState = origPush;
+    };
+  });
+
+  let shouldShowAddBtn = $derived(!href.includes("/app"));
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -73,14 +95,27 @@
   >
     <!-- Header -->
     <div
-      class="flex items-center gap-2 border-b border-sidebar-border px-3 py-3 shrink-0"
+      class="flex items-center justify-between border-b border-sidebar-border px-3 py-3 shrink-0"
     >
-      <MessageSquare class="size-4 text-muted-foreground" />
-      <span
-        class="text-xs font-medium text-muted-foreground uppercase tracking-wider font-mono"
-      >
-        Rooms
-      </span>
+      <div class="flex items-center gap-2">
+        <MessageSquare class="size-4 text-muted-foreground" />
+        <span
+          class="text-xs font-semibold text-muted-foreground mt-0.75 uppercase tracking-wider font-mono"
+        >
+          Rooms
+        </span>
+      </div>
+      {#if onOpenCreateJoin && shouldShowAddBtn}
+        <button
+          type="button"
+          onclick={onOpenCreateJoin}
+          class="inline-flex size-7 items-center justify-center rounded-md border border-sidebar-border bg-sidebar-accent/40 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
+          aria-label="Create or join room"
+          title="Create / Join room"
+        >
+          <Plus class="size-4" />
+        </button>
+      {/if}
     </div>
 
     <!-- Room list -->

@@ -45,6 +45,7 @@ import {
   type AnyWireMessage,
   type WireChatMessage,
   type WireProfile,
+  type WireCallState,
   type FileEntry,
   type FileMeta,
   type Attachment,
@@ -94,6 +95,7 @@ interface TransportState {
   watchingTransmissionProducerId: string | null;
   transmissionOutputVolume: number;
   fileTransfers: Map<string, FileTransferSnapshot>;
+  callPeerStates: Map<string, { muted: boolean; deafened: boolean }>;
 }
 
 export const transportState = $state<TransportState>({
@@ -121,6 +123,7 @@ export const transportState = $state<TransportState>({
   watchingTransmissionProducerId: null,
   transmissionOutputVolume: 1,
   fileTransfers: new Map(),
+  callPeerStates: new Map(),
 });
 
 let _lamport = 0;
@@ -231,6 +234,16 @@ function _sendCallPresence(peerId?: string): void {
   const payload = encode({
     type: MessageType.CallPresence,
     inCall: transportState.inCall,
+  });
+  if (peerId) _transport.send(peerId, payload);
+  else _transport.broadcast(payload);
+}
+
+function _sendCallState(peerId?: string): void {
+  const payload = encode({
+    type: MessageType.CallState,
+    muted: transportState.muted,
+    deafened: transportState.deafened,
   });
   if (peerId) _transport.send(peerId, payload);
   else _transport.broadcast(payload);
@@ -453,9 +466,22 @@ function _handleCallPresence(peerId: string, inCall: boolean): void {
       transportState.watchingTransmissionPeerId = null;
       transportState.watchingTransmissionProducerId = null;
     }
+
+    const callStateNext = new Map(transportState.callPeerStates);
+    callStateNext.delete(peerId);
+    transportState.callPeerStates = callStateNext;
   }
 
   transportState.callPeerIds = next;
+}
+
+function _handleCallState(peerId: string, msg: WireCallState): void {
+  const next = new Map(transportState.callPeerStates);
+  next.set(peerId, {
+    muted: !!msg.muted,
+    deafened: !!msg.deafened,
+  });
+  transportState.callPeerStates = next;
 }
 
 function _handleRoomName(name: string): void {
@@ -680,6 +706,7 @@ _transport.on("connect", (peerId) => {
   _broadcastProfile().catch(() => {});
   _sendRoomName(peerId);
   if (transportState.inCall) _sendCallPresence(peerId);
+  if (transportState.inCall) _sendCallState(peerId);
   _sendDigest(peerId).catch(() => {});
 });
 
@@ -694,6 +721,10 @@ _transport.on("disconnect", (peerId) => {
   const calls = new Set(transportState.callPeerIds);
   calls.delete(peerId);
   transportState.callPeerIds = calls;
+
+  const callStates = new Map(transportState.callPeerStates);
+  callStates.delete(peerId);
+  transportState.callPeerStates = callStates;
 
   const did = _peerIdToDid.get(peerId);
   if (did) {
@@ -743,6 +774,9 @@ _transport.on("message", (peerId, data) => {
         break;
       case MessageType.CallPresence:
         _handleCallPresence(peerId, msg.inCall);
+        break;
+      case MessageType.CallState:
+        _handleCallState(peerId, msg);
         break;
       case MessageType.RoomName:
         _handleRoomName(msg.name);
@@ -954,6 +988,7 @@ export function leaveRoom(): void {
   transportState.watchingTransmissionPeerId = null;
   transportState.watchingTransmissionProducerId = null;
   transportState.fileTransfers = new Map();
+  transportState.callPeerStates = new Map();
 }
 
 interface SendMessageOptions {
@@ -1211,6 +1246,7 @@ export async function joinCall(): Promise<void> {
     playJoinSound();
     _sendCallPresence();
     transportState.muted = _voice.isMuted();
+    _sendCallState();
     transportState.localMicStream = _voice.getMicStream();
   } catch (err) {
     _voice.leave();
@@ -1261,6 +1297,7 @@ export function toggleMute(): void {
     playMuteSound();
   }
   transportState.muted = _voice.isMuted();
+  _sendCallState();
 }
 
 export async function startCamera(): Promise<void> {
@@ -1439,6 +1476,7 @@ export function setDeafened(deafened: boolean): void {
     transportState.deafened = false;
     playUndeafenSound();
   }
+  _sendCallState();
 }
 
 export function toggleDeafen(): void {
