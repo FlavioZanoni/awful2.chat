@@ -2,8 +2,12 @@ services:
   signal:
     build:
       context: ./signal
+      dockerfile: Dockerfile.dev
     ports:
       - "8080:8080"
+    volumes:
+      - ./signal:/app
+      - /app/node_modules
     environment:
       NODE_ENV: development
       KLIPY_API_KEY: ${KLIPY_API_KEY:-dev-key}
@@ -22,7 +26,7 @@ services:
     environment:
       VITE_SIGNAL_URL: ${PUBLIC_SIGNAL_URL:-http://localhost:8080/signal}
       VITE_SFU_URL: ${PUBLIC_SFU_URL:-http://localhost:3000}
-      VITE_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/klipy}
+      VITE_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
     depends_on:
       - signal
     networks:
