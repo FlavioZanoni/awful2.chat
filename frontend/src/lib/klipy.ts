@@ -48,8 +48,8 @@ interface KlipyResponse {
   };
 }
 
-const KLIPY_API_BASE =
-  import.meta.env.VITE_API_URL || "https://awful.frav.in/klipy";
+const API_URL =
+  import.meta.env.VITE_API_URL + "/klipy" || "https://awful.frav.in/klipy";
 
 function normalizeGif(item: KlipyResponse["data"]["data"][0]): KlipyGif {
   const file = item.file || {};
@@ -92,7 +92,7 @@ export async function searchGifs(
       limit: String(limit),
       page: String(page),
     });
-    const res = await fetch(`${KLIPY_API_BASE}/search?${params}`);
+    const res = await fetch(`${API_URL}/search?${params}`);
     if (!res.ok) return { gifs: [], hasMore: false };
     const data: KlipyResponse = await res.json();
     if (!data.result) return { gifs: [], hasMore: false };
@@ -116,7 +116,7 @@ export async function getTrendingGifs(
       limit: String(limit),
       page: String(page),
     });
-    const res = await fetch(`${KLIPY_API_BASE}/trending?${params}`);
+    const res = await fetch(`${API_URL}/trending?${params}`);
     if (!res.ok) return { gifs: [], hasMore: false };
     const data: KlipyResponse = await res.json();
     if (!data.result) return { gifs: [], hasMore: false };

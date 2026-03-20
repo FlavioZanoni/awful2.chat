@@ -747,23 +747,30 @@
             {/if}
             <div
               id={`msg-${msg.id}`}
-              class="group relative rounded-md px-2 py-0.5 hover:bg-muted/50 touch-pan-y select-none {swipeMessageId ===
-                msg.id && isSwiping
-                ? 'bg-primary/10'
-                : ''} {showHeader ? 'mt-3 pt-1' : ''}"
+              class="group relative rounded-md px-2 py-0.5 hover:bg-muted/50 cursor-default! {showHeader
+                ? 'mt-3 pt-1'
+                : ''}"
               role="button"
-              tabindex="0"
-              onclick={() => handleMessageClick(msg.id)}
-              onkeydown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  handleMessageClick(msg.id);
-                }
-              }}
-              ontouchstart={(e) => handleTouchStart(msg.id, e)}
-              ontouchmove={(e) => handleTouchMove(msg.id, e)}
-              ontouchend={(e) => handleTouchEnd(msg.id, e)}
-              style={swipeMessageId === msg.id
+              tabindex={isMobile ? 0 : -1}
+              onclick={() => isMobile && handleMessageClick(msg.id)}
+              onkeydown={isMobile
+                ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleMessageClick(msg.id);
+                    }
+                  }
+                : undefined}
+              ontouchstart={isMobile
+                ? (e) => handleTouchStart(msg.id, e)
+                : undefined}
+              ontouchmove={isMobile
+                ? (e) => handleTouchMove(msg.id, e)
+                : undefined}
+              ontouchend={isMobile
+                ? (e) => handleTouchEnd(msg.id, e)
+                : undefined}
+              style={isMobile && swipeMessageId === msg.id
                 ? `transform: translateX(${Math.min(0, swipeCurrentX - swipeStartX)}px); transition: ${isSwiping ? "none" : "transform 0.2s ease-out"}`
                 : ""}
             >
@@ -856,7 +863,7 @@
               {/if}
 
               <!-- Swipe indicator for reply -->
-              {#if swipeMessageId === msg.id && isSwiping}
+              {#if isMobile && swipeMessageId === msg.id && isSwiping}
                 <div
                   class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground opacity-70"
                 >
