@@ -25,6 +25,7 @@
   import ReloadPrompt from "./ReloadPrompt.svelte";
   import InstallPrompt from "./InstallPrompt.svelte";
   import { Dialog } from "bits-ui";
+  import { X } from "@lucide/svelte";
 
   const queryClient = new QueryClient();
 
@@ -70,10 +71,6 @@
     incomingSharedFiles = payload.files;
     incomingSharedText = payload.text ?? payload.url ?? "";
     history.replaceState({}, "", "/app");
-  }
-
-  function toggleSidebar() {
-    sidebarOpen = !sidebarOpen;
   }
 
   async function handleJoin(
@@ -197,18 +194,16 @@
     {/if}
   {:else}
     <div class="min-h-screen bg-background text-foreground font-mono flex">
-      {#if hasSidebar}
-        <RoomSidebar
-          rooms={roomsStore.rooms}
-          {activeRoomCode}
-          unreadCounts={roomsStore.unreadCounts}
-          isOpen={sidebarOpen}
-          onClose={() => (sidebarOpen = false)}
-          onSelectRoom={handleSelectRoom}
-          onRemoveRoom={handleRemoveRoom}
-          onOpenCreateJoin={openCreateJoin}
-        />
-      {/if}
+      <RoomSidebar
+        rooms={roomsStore.rooms}
+        {activeRoomCode}
+        unreadCounts={roomsStore.unreadCounts}
+        isOpen={sidebarOpen}
+        onClose={() => (sidebarOpen = false)}
+        onSelectRoom={handleSelectRoom}
+        onRemoveRoom={handleRemoveRoom}
+        onOpenCreateJoin={openCreateJoin}
+      />
       <div class="flex-1 min-w-0">
         {#if activeRoomCode}
           <ChatView
@@ -223,35 +218,61 @@
           />
         {:else}
           {#if incomingSharedFiles.length > 0}
-            <div class="border-b border-border bg-muted/30 px-4 py-3">
-              <p class="text-sm text-foreground">
-                Shared {incomingSharedFiles.length} file{incomingSharedFiles.length ===
-                1
-                  ? ""
-                  : "s"} ready to send.
-              </p>
-              {#if roomsStore.rooms.length > 0}
-                <div class="mt-2 flex flex-wrap gap-2">
-                  {#each roomsStore.rooms as room (room.roomCode)}
-                    <button
-                      type="button"
-                      class="rounded border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
-                      onclick={() => handleSelectRoom(room.roomCode)}
+            <Dialog.Root open={incomingSharedFiles.length > 0}>
+              <Dialog.Portal>
+                <Dialog.Overlay
+                  class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+                />
+                <Dialog.Content
+                  class="fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-4 shadow-lg"
+                >
+                  <Dialog.Title class="text-lg font-semibold">
+                    Sending {incomingSharedFiles.length} file{incomingSharedFiles.length ===
+                    1
+                      ? ""
+                      : "s"}
+                  </Dialog.Title>
+
+                  {#if roomsStore.rooms.length > 0}
+                    <Dialog.Description
+                      class="mt-1 text-sm text-muted-foreground"
                     >
-                      Send to {room.name || room.roomCode}
-                    </button>
-                  {/each}
-                </div>
-              {:else}
-                <p class="mt-1 text-xs text-muted-foreground">
-                  Join or create a room, then shared files will be staged
-                  automatically.
-                </p>
-              {/if}
-            </div>
+                      Choose a room to send to
+                    </Dialog.Description>
+                    <div class="mt-4 flex flex-col gap-2">
+                      {#each roomsStore.rooms as room (room.roomCode)}
+                        <button
+                          type="button"
+                          class="flex items-center justify-between rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground hover:bg-muted"
+                          onclick={() => handleSelectRoom(room.roomCode)}
+                        >
+                          <span class="font-medium"
+                            >{room.name || room.roomCode}</span
+                          >
+                          <span class="text-xs text-muted-foreground"
+                            >{room.roomCode.slice(0, 8)}...</span
+                          >
+                        </button>
+                      {/each}
+                    </div>
+                  {:else}
+                    <p class="mt-4 text-sm text-muted-foreground">
+                      No rooms available. Join or create a room first.
+                    </p>
+                  {/if}
+                  <Dialog.Close
+                    class="absolute right-4 top-4 rounded-sm opacity-70 hover:opacity-100"
+                  >
+                    <X class="size-4" />
+                  </Dialog.Close>
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
           {/if}
           <RoomCreateJoin
-            {toggleSidebar}
+            toggleSidebar={() => {
+              sidebarOpen = !sidebarOpen;
+            }}
             onJoin={handleJoin}
             error={joinError}
           />

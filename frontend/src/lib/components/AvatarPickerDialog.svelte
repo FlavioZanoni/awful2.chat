@@ -1,11 +1,11 @@
 <script lang="ts">
   import { createInfiniteQuery } from "@tanstack/svelte-query";
-import { X, Upload, Search, Link } from "@lucide/svelte";
-import { Dialog as DialogPrimitive } from "bits-ui";
-import Button from "$lib/components/ui/button/button.svelte";
-import Input from "$lib/components/ui/input/input.svelte";
-import { Drawer, DrawerContent } from "$lib/components/ui/drawer";
-import { saveAvatar, profileStore } from "$lib/profile.svelte";
+  import { X, Upload, Search, Link } from "@lucide/svelte";
+  import { Dialog as DialogPrimitive } from "bits-ui";
+  import Button from "$lib/components/ui/button/button.svelte";
+  import Input from "$lib/components/ui/input/input.svelte";
+  import { Drawer, DrawerContent } from "$lib/components/ui/drawer";
+  import { saveAvatar, profileStore } from "$lib/profile.svelte";
   import {
     searchGifs,
     getTrendingGifs,
@@ -208,7 +208,11 @@ import { saveAvatar, profileStore } from "$lib/profile.svelte";
         class="size-28 rounded-full overflow-hidden bg-primary/20 flex items-center justify-center ring-2 ring-border"
       >
         {#if preview}
-          <img src={preview} alt="Avatar preview" class="size-full object-cover" />
+          <img
+            src={preview}
+            alt="Avatar preview"
+            class="size-full object-cover"
+          />
         {:else}
           <span
             class="text-3xl font-semibold text-primary font-mono select-none"
@@ -372,12 +376,10 @@ import { saveAvatar, profileStore } from "$lib/profile.svelte";
               placeholder="https://example.com/avatar.png"
               class="pl-8 text-xs font-mono"
               bind:value={urlInput}
-              onkeydown={(e: KeyboardEvent) =>
-                e.key === "Enter" && applyUrl()}
+              onkeydown={(e: KeyboardEvent) => e.key === "Enter" && applyUrl()}
             />
           </div>
-          <Button variant="secondary" size="sm" onclick={applyUrl}
-            >Apply</Button
+          <Button variant="secondary" size="sm" onclick={applyUrl}>Apply</Button
           >
         </div>
       </div>
@@ -393,11 +395,7 @@ import { saveAvatar, profileStore } from "$lib/profile.svelte";
 {/snippet}
 
 {#if isMobile}
-  <Drawer
-    {open}
-    onOpenChange={closeHandler}
-    direction="bottom"
-  >
+  <Drawer {open} onOpenChange={closeHandler} direction="bottom">
     <DrawerContent class="bg-card text-card-foreground border-t border-border">
       <div class="flex flex-col h-full max-h-[88vh] overflow-hidden">
         {@render AvatarPickerContent()}
