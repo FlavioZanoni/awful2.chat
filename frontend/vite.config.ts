@@ -66,11 +66,17 @@ export default defineConfig({
             files: [
               {
                 name: "files",
-                accept: ["image/*", "video/*", "audio/*", "text/plain", "application/pdf"],
+                accept: [
+                  "image/*",
+                  "video/*",
+                  "audio/*",
+                  "text/plain",
+                  "application/pdf",
+                ],
               },
             ],
           },
-        },
+        } as const,
       },
     }),
   ],

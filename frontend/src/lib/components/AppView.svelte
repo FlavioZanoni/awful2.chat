@@ -6,7 +6,6 @@
   import RoomCreateJoin from "$lib/components/RoomCreateJoin.svelte";
   import ChatView from "$lib/components/ChatView.svelte";
   import RoomSidebar from "$lib/components/RoomSidebar.svelte";
-  import { Drawer, DrawerContent } from "$lib/components/ui/drawer";
   import {
     transportState,
     joinRoom,
@@ -217,8 +216,8 @@
             onConsumeIncomingShared={clearIncomingShared}
           />
         {:else}
-          {#if incomingSharedFiles.length > 0}
-            <Dialog.Root open={incomingSharedFiles.length > 0}>
+          {#if incomingSharedFiles.length > 0 || incomingSharedText}
+            <Dialog.Root open={incomingSharedFiles.length > 0 || !!incomingSharedText}>
               <Dialog.Portal>
                 <Dialog.Overlay
                   class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
@@ -226,12 +225,18 @@
                 <Dialog.Content
                   class="fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-4 shadow-lg"
                 >
-                  <Dialog.Title class="text-lg font-semibold">
-                    Sending {incomingSharedFiles.length} file{incomingSharedFiles.length ===
-                    1
-                      ? ""
-                      : "s"}
-                  </Dialog.Title>
+                  {#if incomingSharedText && incomingSharedFiles.length === 0}
+                    <Dialog.Title class="text-lg font-semibold">
+                      Sharing text
+                    </Dialog.Title>
+                  {:else if incomingSharedFiles.length > 0}
+                    <Dialog.Title class="text-lg font-semibold">
+                      Sending {incomingSharedFiles.length} file{incomingSharedFiles.length ===
+                      1
+                        ? ""
+                        : "s"}
+                    </Dialog.Title>
+                  {/if}
 
                   {#if roomsStore.rooms.length > 0}
                     <Dialog.Description
