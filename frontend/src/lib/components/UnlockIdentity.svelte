@@ -16,6 +16,38 @@
   } from "$lib/components/ui/card";
 
   let password = $state("");
+  let remember = $state(false);
+
+  const REMEMBER_KEY = "awful_remembered_password";
+  const DURATION_KEY = "awful_remember_duration";
+  const ONE_DAY = 24 * 60 * 60 * 1000;
+
+  function getRememberDuration(): number {
+    const stored = localStorage.getItem(DURATION_KEY);
+    if (stored) return parseInt(stored, 10);
+    return 15;
+  }
+
+  function saveRememberedPassword(value: string, duration: number) {
+    const expires = duration === -1 ? -1 : Date.now() + duration * ONE_DAY;
+    localStorage.setItem(
+      REMEMBER_KEY,
+      JSON.stringify({ value, expires })
+    );
+  }
+
+  function getRememberedPassword(): { value: string; expires: number } | null {
+    const stored = localStorage.getItem(REMEMBER_KEY);
+    if (!stored) return null;
+    try {
+      const parsed = JSON.parse(stored);
+      if (parsed.expires === -1 || Date.now() < parsed.expires) return parsed;
+      localStorage.removeItem(REMEMBER_KEY);
+    } catch {
+      localStorage.removeItem(REMEMBER_KEY);
+    }
+    return null;
+  }
 
   interface Props {
     onRecover?: () => void;
@@ -27,9 +59,31 @@
     identityStore.hasWebAuthn && !identityStore.loading
   );
 
+  $effect(() => {
+    if (!identityStore.isUnlocked && !identityStore.loading && !identityStore.error) {
+      const stored = getRememberedPassword();
+      if (stored) {
+        password = stored.value;
+        remember = true;
+        if (!canUseBiometrics) {
+          unlock(stored.value).catch(() => {
+            password = "";
+            remember = false;
+          });
+        }
+      }
+    }
+  });
+
   async function handleUnlock() {
     try {
+      const duration = remember ? getRememberDuration() : 0;
       await unlock(password);
+      if (duration > 0) {
+        saveRememberedPassword(password, duration);
+      } else {
+        localStorage.removeItem(REMEMBER_KEY);
+      }
     } catch {
       password = "";
     }
@@ -103,6 +157,15 @@
       {#if identityStore.error}
         <p class="text-xs text-destructive font-mono">{identityStore.error}</p>
       {/if}
+
+      <label class="flex items-center gap-2 text-xs text-muted-foreground font-mono cursor-pointer">
+        <input
+          type="checkbox"
+          bind:checked={remember}
+          class="accent-primary"
+        />
+        Remember my password
+      </label>
     </CardContent>
 
     <CardFooter class="flex flex-col gap-2">

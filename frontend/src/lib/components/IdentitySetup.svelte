@@ -51,6 +51,25 @@
   let createdPassword = $state(""); // hold password through steps for enrollment
   let biometricLoading = $state(false);
   let biometricError = $state<string | null>(null);
+  let remember = $state(true);
+
+  const REMEMBER_KEY = "awful_remembered_password";
+  const DURATION_KEY = "awful_remember_duration";
+  const ONE_DAY = 24 * 60 * 60 * 1000;
+
+  function getRememberDuration(): number {
+    const stored = localStorage.getItem(DURATION_KEY);
+    if (stored) return parseInt(stored, 10);
+    return 15;
+  }
+
+  function saveRememberedPassword(value: string, duration: number) {
+    const expires = duration === -1 ? -1 : Date.now() + duration * ONE_DAY;
+    localStorage.setItem(
+      REMEMBER_KEY,
+      JSON.stringify({ value, expires })
+    );
+  }
 
   const passwordMismatch = $derived(
     passwordConfirm.length > 0 && password !== passwordConfirm
@@ -113,12 +132,18 @@
     identityStore.publicKey = pendingKeypair.publicKey;
     identityStore.keypair = pendingKeypair;
     identityStore.error = null;
+    if (remember) {
+      saveRememberedPassword(createdPassword, getRememberDuration());
+    }
     createdPassword = "";
     mnemonic = null;
   }
 
   async function handleRestore() {
     await restore(restoreMnemonic.trim(), restorePassword);
+    if (remember) {
+      saveRememberedPassword(restorePassword, getRememberDuration());
+    }
   }
 
   function copyMnemonic() {
@@ -225,6 +250,15 @@
         {#if error}
           <p class="text-xs text-destructive font-mono">{error}</p>
         {/if}
+
+        <label class="flex items-center gap-2 text-xs text-muted-foreground font-mono cursor-pointer">
+          <input
+            type="checkbox"
+            bind:checked={remember}
+            class="accent-primary"
+          />
+          Remember my password
+        </label>
       </CardContent>
       <CardFooter>
         <Button
@@ -471,6 +505,15 @@
             {identityStore.error}
           </p>
         {/if}
+
+        <label class="flex items-center gap-2 text-xs text-muted-foreground font-mono cursor-pointer">
+          <input
+            type="checkbox"
+            bind:checked={remember}
+            class="accent-primary"
+          />
+          Remember my password
+        </label>
       </CardContent>
       <CardFooter>
         <Button

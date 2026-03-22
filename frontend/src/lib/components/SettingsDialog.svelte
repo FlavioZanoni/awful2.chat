@@ -39,7 +39,12 @@
     transportState,
     toggleMute,
   } from "$lib/transport.svelte";
-  import { enroll, identityStore, removeWebAuthn } from "$lib/identity.svelte";
+  import {
+    enroll,
+    identityStore,
+    lock,
+    removeWebAuthn,
+  } from "$lib/identity.svelte";
 
   interface Props {
     open: boolean;
@@ -61,6 +66,10 @@
   let biometricError = $state<string | null>(null);
   let biometricSuccess = $state(false);
   let confirmRemoveBiometric = $state(false);
+
+  let rememberDuration = $state(
+    parseInt(localStorage.getItem("awful_remember_duration") ?? "15", 10)
+  );
 
   const canEnrollBiometrics = $derived(
     !identityStore.hasWebAuthn &&
@@ -348,9 +357,8 @@
       </div>
     </div>
 
-    <Separator class="bg-border" />
-
     {#if canEnrollBiometrics || identityStore.hasWebAuthn}
+      <Separator class="bg-border" />
       <div class="flex flex-col gap-3">
         <Label
           class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
@@ -442,6 +450,57 @@
         {/if}
       </div>
     {/if}
+
+    <Separator class="bg-border" />
+
+    <div class="flex flex-col gap-2">
+      <Label
+        class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
+      >
+        session
+      </Label>
+
+      <div class="flex flex-col gap-1">
+        <Label class="text-xs text-muted-foreground font-mono">
+          Remember password for
+        </Label>
+        <Select
+          type="single"
+          value={rememberDuration.toString()}
+          onValueChange={(v: string) => {
+            const val = parseInt(v, 10);
+            rememberDuration = val;
+            localStorage.setItem("awful_remember_duration", v);
+          }}
+        >
+          <SelectTrigger class="w-full font-mono">
+            <span class="text-xs">
+              {rememberDuration === -1
+                ? "Until I log out"
+                : `${rememberDuration} days`}
+            </span>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="5">5 days</SelectItem>
+            <SelectItem value="15">15 days</SelectItem>
+            <SelectItem value="30">30 days</SelectItem>
+            <SelectItem value="60">60 days</SelectItem>
+            <SelectItem value="-1">Until I log out</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <Button
+        variant="outline"
+        class="w-full font-mono mt-2"
+        onclick={() => {
+          localStorage.removeItem("awful_remembered_password");
+          lock();
+        }}
+      >
+        Lock / Logout
+      </Button>
+    </div>
 
     <Separator class="bg-border" />
 
