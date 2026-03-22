@@ -152,16 +152,15 @@ export class SimplePeerTransport implements PeerTransport, SimplePeerExtension {
       trickle: true,
       streams: [...this.initialStreams],
       config: {
+        iceCandidatePoolSize: 10,
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },
           { urls: "stun:stun1.l.google.com:19302" },
           {
-            urls: "turn:awful.frav.in:3478",
-            username: "awful",
-            credential: "awful",
-          },
-          {
-            urls: "turn:awful.frav.in:3478?transport=tcp",
+            urls: [
+              "turn:awful.frav.in:3478?transport=udp",
+              "turn:awful.frav.in:3478?transport=tcp",
+            ],
             username: "awful",
             credential: "awful",
           },
