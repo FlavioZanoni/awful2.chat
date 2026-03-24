@@ -13,6 +13,8 @@
     DrawerHeader,
     DrawerTitle,
   } from "$lib/components/ui/drawer";
+  import DeviceSyncDialog from "$lib/components/DeviceSyncDialog.svelte";
+  import { QrCode, Camera } from "@lucide/svelte";
   import {
     Select,
     SelectContent,
@@ -59,6 +61,8 @@
   let activeInput = $state<string | null>(null);
   let activeOutput = $state<string | null>(null);
   let avatarDialogOpen = $state(false);
+  let syncDialogOpen = $state(false);
+  let syncDialogMode: "generate-qr" | "scan-qr" = $state("generate-qr");
   let nameValue = $state("");
   let confirmErase = $state(false);
 
@@ -494,12 +498,17 @@
         </Select>
       </div>
 
-      <label class="flex items-center gap-2 text-xs text-muted-foreground font-mono cursor-pointer">
+      <label
+        class="flex items-center gap-2 text-xs text-muted-foreground font-mono cursor-pointer"
+      >
         <input
           type="checkbox"
           bind:checked={rememberResetTimer}
           onchange={() => {
-            localStorage.setItem("awful_remember_reset_timer", String(rememberResetTimer));
+            localStorage.setItem(
+              "awful_remember_reset_timer",
+              String(rememberResetTimer)
+            );
           }}
           class="accent-primary"
         />
@@ -516,6 +525,48 @@
       >
         Lock / Logout
       </Button>
+    </div>
+
+    <Separator class="bg-border" />
+
+    <div class="flex flex-col gap-3">
+      <Label
+        class="text-xs font-mono text-muted-foreground uppercase tracking-widest"
+      >
+        Sync
+      </Label>
+
+      <div class="flex flex-col gap-2">
+        <p class="text-xs text-muted-foreground font-mono">
+          Sync a new device or merge data with another device.
+        </p>
+        <div class="flex flex-col gap-3">
+          <div class="grid grid-cols-2 gap-2">
+            <Button
+              variant="outline"
+              class="font-mono flex-col h-auto py-3 gap-2"
+              onclick={() => {
+                syncDialogMode = "generate-qr";
+                syncDialogOpen = true;
+              }}
+            >
+              <QrCode class="w-5 h-5" />
+              <span class="text-xs">Generate QR</span>
+            </Button>
+            <Button
+              variant="outline"
+              class="font-mono flex-col h-auto py-3 gap-2"
+              onclick={() => {
+                syncDialogMode = "scan-qr";
+                syncDialogOpen = true;
+              }}
+            >
+              <Camera class="w-5 h-5" />
+              <span class="text-xs">Scan QR</span>
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <Separator class="bg-border" />
@@ -597,4 +648,12 @@
   onClose={() => {
     avatarDialogOpen = false;
   }}
+/>
+
+<DeviceSyncDialog
+  bind:open={syncDialogOpen}
+  onClose={() => {
+    syncDialogOpen = false;
+  }}
+  flowMode={syncDialogMode}
 />

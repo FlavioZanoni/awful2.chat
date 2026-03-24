@@ -127,7 +127,7 @@ type AppDB = IDBPDatabase<{
 
 let db: AppDB | null = null;
 
-async function getDB(): Promise<AppDB> {
+export async function getDB(): Promise<AppDB> {
   if (db) return db;
 
   db = (await openDB("awful-chat", 3, {

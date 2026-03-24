@@ -15,8 +15,9 @@
   import { profileStore, loadProfile } from "$lib/profile.svelte";
   import type { KeypairRecord } from "$lib/identity";
   import { enroll } from "$lib/identity.svelte";
-  import { ArrowLeft } from "@lucide/svelte";
+  import { ArrowLeft, Smartphone } from "@lucide/svelte";
   import { setCookie } from "$lib/utils";
+  import DeviceSyncDialog from "$lib/components/DeviceSyncDialog.svelte";
 
   type Step =
     | "entry"
@@ -48,6 +49,8 @@
   let restoreMnemonic = $state("");
   let restorePassword = $state("");
   let restorePasswordConfirm = $state("");
+
+  let syncDialogOpen = $state(false);
 
   let createdPassword = $state(""); // hold password through steps for enrollment
   let biometricLoading = $state(false);
@@ -178,7 +181,8 @@
           No identity found
         </CardTitle>
         <CardDescription class="text-muted-foreground text-xs font-mono">
-          Create a new identity or restore from a recovery phrase
+          Create a new identity, restore from a recovery phrase, or sync from
+          another device
         </CardDescription>
       </CardHeader>
       <CardFooter class="flex flex-col gap-2 pt-0">
@@ -194,6 +198,16 @@
           class="w-full font-mono"
         >
           Restore from phrase
+        </Button>
+        <Button
+          onclick={() => {
+            syncDialogOpen = true;
+          }}
+          variant="outline"
+          class="w-full font-mono"
+        >
+          <Smartphone class="w-4 h-4 mr-2" />
+          Sync from another device
         </Button>
       </CardFooter>
     </Card>
@@ -248,7 +262,9 @@
           <p class="text-xs text-destructive font-mono">{error}</p>
         {/if}
 
-        <label class="flex items-center gap-2 text-xs text-muted-foreground font-mono cursor-pointer">
+        <label
+          class="flex items-center gap-2 text-xs text-muted-foreground font-mono cursor-pointer"
+        >
           <input
             type="checkbox"
             bind:checked={remember}
@@ -503,7 +519,9 @@
           </p>
         {/if}
 
-        <label class="flex items-center gap-2 text-xs text-muted-foreground font-mono cursor-pointer">
+        <label
+          class="flex items-center gap-2 text-xs text-muted-foreground font-mono cursor-pointer"
+        >
           <input
             type="checkbox"
             bind:checked={remember}
@@ -523,4 +541,16 @@
       </CardFooter>
     </Card>
   {/if}
+
+  <DeviceSyncDialog
+    bind:open={syncDialogOpen}
+    onClose={() => {
+      syncDialogOpen = false;
+    }}
+    onComplete={() => {
+      // Reload to unlock the synced identity
+      window.location.reload();
+    }}
+    flowMode="receive"
+  />
 </div>
