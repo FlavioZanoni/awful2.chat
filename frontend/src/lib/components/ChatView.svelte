@@ -83,14 +83,15 @@
   let stagedPreviewUrls = $state(new Map<string, string>());
   const stagedFileFingerprints = new Map<string, string>();
 
+  type SwipeDirection = "undecided" | "horizontal" | "vertical";
   let swipeStartX = $state(0);
   let swipeStartY = $state(0);
   let swipeCurrentX = $state(0);
   let swipeMessageId = $state<string | null>(null);
   let isSwiping = $state(false);
-  const SWIPE_THRESHOLD = 100;
+  let swipeDirection: SwipeDirection = $state("undecided");
+  const SWIPE_THRESHOLD = 25;
   const SWIPE_DEADZONE = 15;
-  const SWIPE_MAX_VERTICAL = 24;
   const SWIPE_DIRECTION_RATIO = 1.25;
 
   let isMobile = $state(false);
@@ -388,6 +389,12 @@
     activeMessageId = activeMessageId === msgId ? null : msgId;
   }
 
+  function autoResize() {
+    if (!textareaEl) return;
+    textareaEl.style.height = "auto";
+    textareaEl.style.height = textareaEl.scrollHeight + "px";
+  }
+
   function handleTouchStart(msgId: string, e: TouchEvent) {
     if (e.touches.length !== 1) {
       swipeMessageId = null;
@@ -410,38 +417,53 @@
     swipeStartX = touch.clientX;
     swipeStartY = touch.clientY;
     swipeCurrentX = touch.clientX;
-    swipeMessageId = msgId;
-    isSwiping = false;
-  }
 
-  function autoResize() {
-    if (!textareaEl) return;
-    textareaEl.style.height = "auto";
-    textareaEl.style.height = textareaEl.scrollHeight + "px";
+    swipeMessageId = msgId;
+    swipeDirection = "undecided";
+    isSwiping = false;
   }
 
   function handleTouchMove(msgId: string, e: TouchEvent) {
     if (swipeMessageId !== msgId || e.touches.length !== 1) return;
-
     const touch = e.touches[0];
     const deltaX = touch.clientX - swipeStartX;
+    const deltaY = touch.clientY - swipeStartY;
     const absX = Math.abs(deltaX);
-    const absY = Math.abs(touch.clientY - swipeStartY);
+    const absY = Math.abs(deltaY);
 
-    if (absX <= SWIPE_DEADZONE) return;
-    if (deltaX >= 0) {
-      isSwiping = false;
-      return;
+    if (absX < SWIPE_DEADZONE && absY < SWIPE_DEADZONE) return;
+
+    if (swipeDirection === "undecided") {
+      if (absX > absY * SWIPE_DIRECTION_RATIO) {
+        swipeDirection = "horizontal";
+      } else if (absY > absX) {
+        swipeDirection = "vertical";
+        swipeMessageId = null;
+        isSwiping = false;
+        return;
+      }
     }
 
-    const mostlyHorizontal = absX > absY * SWIPE_DIRECTION_RATIO;
-    if (!mostlyHorizontal || absY > SWIPE_MAX_VERTICAL) {
-      isSwiping = false;
-      return;
-    }
+    if (swipeDirection === "horizontal") {
+      if (deltaX >= 0) {
+        isSwiping = false;
+        return;
+      }
 
-    isSwiping = true;
-    swipeCurrentX = touch.clientX;
+      const resistance = 1 - Math.pow(Math.min(absX / 180, 1), 1.2);
+      const adjustedX = deltaX * resistance;
+
+      isSwiping = true;
+      swipeCurrentX = swipeStartX + adjustedX;
+
+      if (adjustedX < -SWIPE_THRESHOLD) {
+        const msg = visibleMessages.find((m) => m.id === msgId);
+        if (msg) {
+          startReply(msg);
+          activeMessageId = null;
+        }
+      }
+    }
   }
 
   function handleTouchEnd(msgId: string, _: TouchEvent) {
@@ -456,6 +478,7 @@
     }
 
     swipeMessageId = null;
+    swipeDirection = "undecided";
     isSwiping = false;
     swipeCurrentX = 0;
   }
@@ -864,9 +887,14 @@
                 </div>
               {/if}
 
-              {#if isMobile && swipeMessageId === msg.id && isSwiping}
+              {#if isMobile && swipeMessageId === msg.id}
+                {@const progress = Math.min(
+                  1,
+                  Math.abs((swipeCurrentX - swipeStartX) / SWIPE_THRESHOLD)
+                )}
                 <div
-                  class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground opacity-70"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  style={`opacity: ${progress}; transform: translateY(-50%) scale(${0.8 + progress * 0.25});`}
                 >
                   <Reply class="size-5" />
                 </div>
