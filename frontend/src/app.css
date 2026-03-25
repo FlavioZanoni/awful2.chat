@@ -128,3 +128,13 @@ select {
 ::-webkit-scrollbar-corner {
   @apply bg-transparent;
 }
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.chat-messages {
+  overscroll-behavior: contain;
+}

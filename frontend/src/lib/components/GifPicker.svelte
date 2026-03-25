@@ -11,6 +11,7 @@
   } from "$lib/components/ui/drawer";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { searchGifs, getTrendingGifs, type KlipyGif } from "$lib/klipy";
+  import { viewportHeight } from "$lib/actions/viewport-height";
   import {
     getAllSavedGifs,
     putSavedGif,
@@ -107,7 +108,10 @@
     }
   }
 
-  async function fetchGifPage(pageNum: number, append = false): Promise<boolean> {
+  async function fetchGifPage(
+    pageNum: number,
+    append = false
+  ): Promise<boolean> {
     if (Date.now() < nextPageRetryAfter) return false;
 
     try {
@@ -279,7 +283,7 @@
 </script>
 
 {#snippet GifPickerContent()}
-  <div class="px-4 pb-2 space-y-2 shrink-0">
+  <div class="px-4 pb-2 mt-4 space-y-2">
     <div class="relative">
       <Search
         class="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none"
@@ -413,21 +417,15 @@
 
 {#if isMobile}
   <Drawer {open} {onOpenChange} direction="bottom">
-    <DrawerContent class="bg-card text-card-foreground">
-      <DrawerHeader
-        class="relative px-4 pb-0 pt-3 shrink-0 flex flex-row items-center justify-between gap-2"
-      >
-        <DrawerTitle class="text-sm font-semibold">Choose a GIF</DrawerTitle>
-        <button
-          type="button"
-          onclick={() => onOpenChange(false)}
-          class="rounded-md size-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          aria-label="Close"
-        >
-          <X class="size-4" />
-        </button>
-      </DrawerHeader>
-      {@render GifPickerContent()}
+    <DrawerContent class="bg-card text-card-foreground overflow-hidden">
+      <div use:viewportHeight class="flex flex-col w-full overflow-hidden">
+        <DrawerHeader class="px-4 py-3 border-b border-border shrink-0">
+          <DrawerTitle class="font-mono text-base font-semibold mx-auto"
+            >Choose a GIF
+          </DrawerTitle>
+        </DrawerHeader>
+        {@render GifPickerContent()}
+      </div>
     </DrawerContent>
   </Drawer>
 {:else}

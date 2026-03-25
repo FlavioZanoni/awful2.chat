@@ -37,6 +37,7 @@
   import { Input } from "$lib/components/ui/input";
   import { Separator } from "$lib/components/ui/separator";
   import AvatarPickerDialog from "$lib/components/AvatarPickerDialog.svelte";
+  import { viewportHeight } from "$lib/actions/viewport-height";
   import { Button } from "$lib/components/ui/button";
   import { profileStore, saveName } from "$lib/profile.svelte";
   import {
@@ -588,6 +589,7 @@
           onclick={() => {
             syncDialogMode = "generate-qr";
             syncDialogOpen = true;
+            if (isMobile) onClose();
           }}
         >
           <QrCode class="w-5 h-5" />
@@ -599,6 +601,7 @@
           onclick={() => {
             syncDialogMode = "scan-qr";
             syncDialogOpen = true;
+            if (isMobile) onClose();
           }}
         >
           <Camera class="w-5 h-5" />
@@ -841,24 +844,26 @@
 
 {#if isMobile}
   <Drawer bind:open onOpenChange={closeHandler} direction="bottom">
-    <DrawerContent class="bg-card text-card-foreground border-border h-3/4">
-      <DrawerHeader class="px-4 py-3 border-b border-border">
-        <DrawerTitle class="font-mono text-base font-semibold"
-          >Settings</DrawerTitle
-        >
-      </DrawerHeader>
-      <div class="p-4 space-y-4 border-border">
-        {@render TabBar()}
-        <div class="pt-2">
-          {#if activeTab === "profile"}
-            {@render ProfileSection()}
-          {:else if activeTab === "audio"}
-            {@render AudioSection()}
-          {:else if activeTab === "session"}
-            {@render SessionSection()}
-          {:else if activeTab === "data"}
-            {@render DataSection()}
-          {/if}
+    <DrawerContent class="bg-card text-card-foreground border-border">
+      <div use:viewportHeight class="flex flex-col w-full">
+        <DrawerHeader class="px-4 py-3 border-b border-border shrink-0">
+          <DrawerTitle class="font-mono text-base font-semibold mx-auto"
+            >Settings
+          </DrawerTitle>
+        </DrawerHeader>
+        <div class="p-4 space-y-4 border-border overflow-y-auto flex-1">
+          {@render TabBar()}
+          <div class="pt-2">
+            {#if activeTab === "profile"}
+              {@render ProfileSection()}
+            {:else if activeTab === "audio"}
+              {@render AudioSection()}
+            {:else if activeTab === "session"}
+              {@render SessionSection()}
+            {:else if activeTab === "data"}
+              {@render DataSection()}
+            {/if}
+          </div>
         </div>
       </div>
     </DrawerContent>

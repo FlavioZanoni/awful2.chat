@@ -26,6 +26,7 @@
   import GifPicker from "./GifPicker.svelte";
   import EmojiPickerPopup from "./EmojiPickerPopup.svelte";
   import { profileStore, loadProfile } from "$lib/profile.svelte";
+  import { viewportHeight } from "$lib/actions/viewport-height";
   import {
     transportState,
     sendMessage,
@@ -94,6 +95,8 @@
   const SWIPE_DIRECTION_RATIO = 1.25;
 
   let isMobile = $state(false);
+
+  let rootEl = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
     if (typeof window === "undefined") return;
@@ -341,6 +344,7 @@
   }
 
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
+  let inputFocused = $state(false);
 
   let copied = $state(false);
   async function copyCode() {
@@ -619,7 +623,9 @@
 </script>
 
 <div
-  class="relative flex h-dvh flex-col bg-background text-foreground font-mono"
+  bind:this={rootEl}
+  use:viewportHeight
+  class="relative flex flex-col bg-background text-foreground font-mono overflow-hidden"
   role="main"
   ondragenter={handleRootDragEnter}
   ondragover={handleRootDragOver}
@@ -705,7 +711,7 @@
   <div
     bind:this={messagesEl}
     onscroll={handleScroll}
-    class="flex-1 overflow-y-auto overflow-x-hidden px-4 py-2 min-h-0"
+    class="chat-messages flex-1 overflow-y-auto overflow-x-hidden px-4 py-2 min-h-0"
   >
     {#if hasMoreHistory && visibleMessages.length >= 50}
       <div class="flex justify-center py-2">
@@ -1037,6 +1043,8 @@
           bind:value={draft}
           onkeydown={handleKeydown}
           oninput={autoResize}
+          onfocus={() => (inputFocused = true)}
+          onblur={() => (inputFocused = false)}
           placeholder="Type a message…"
           rows={1}
           class="w-full resize-none rounded-md border border-input bg-background pl-3 pr-20 py-2 text-sm text-foreground placeholder:text-muted-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring min-h-10 max-h-30 overflow-y-auto"
