@@ -25,6 +25,7 @@
   import MsgRender from "./MsgRender.svelte";
   import GifPicker from "./GifPicker.svelte";
   import EmojiPickerPopup from "./EmojiPickerPopup.svelte";
+  import UserListSidebar from "./UserListSidebar.svelte";
   import { profileStore, loadProfile } from "$lib/profile.svelte";
   import { viewportHeight } from "$lib/actions/viewport-height";
   import {
@@ -747,11 +748,12 @@
 
   <VoiceVideoCallView />
 
-  <div
-    bind:this={messagesEl}
-    onscroll={handleScroll}
-    class="chat-messages flex-1 overflow-y-auto overflow-x-hidden px-4 py-2 min-h-0"
-  >
+  <div class="flex flex-1 min-h-0 overflow-hidden">
+    <div
+      bind:this={messagesEl}
+      onscroll={handleScroll}
+      class="chat-messages flex-1 overflow-y-auto overflow-x-hidden px-4 py-2 min-h-0"
+    >
     {#if hasMoreHistory && visibleMessages.length >= 50}
       <div class="flex justify-center py-2">
         <Button
@@ -961,6 +963,9 @@
         {/each}
       </div>
     {/if}
+    </div>
+
+    <UserListSidebar />
   </div>
 
   {#if !autoScroll && visibleMessages.length > 0}

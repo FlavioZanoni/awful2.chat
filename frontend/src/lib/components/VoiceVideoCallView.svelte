@@ -4,6 +4,7 @@
     setTransmissionOutputVolume,
     selfId,
     peerIdToDid,
+    isRelayed,
     watchTransmission,
     joinCall,
     toggleCamera,
@@ -29,6 +30,7 @@
     Volume2,
     Volume1,
     VolumeX,
+    Workflow,
   } from "@lucide/svelte";
   import { MonitorIcon } from "@lucide/svelte";
   import { profileStore, loadProfile } from "$lib/profile.svelte";
@@ -607,6 +609,7 @@
           {@const label = getPeerLabel(peerId)}
           {@const avatar = getPeerAvatar(peerId)}
           {@const state = callPeerStates.get(peerId)}
+          {@const relayed = isRelayed(peerId)}
           <div
             title={label}
             class="relative flex size-16 sm:size-20 items-center justify-center rounded-full bg-primary/20 text-2xl font-semibold text-primary ring-2 ring-background font-mono overflow-hidden"
@@ -615,6 +618,11 @@
               <img src={avatar} alt={label} class="size-full object-cover" />
             {:else}
               {label.charAt(0).toUpperCase()}
+            {/if}
+            {#if relayed}
+              <div class="absolute -top-1 -right-1 bg-blue-500 rounded-full p-0.5">
+                <Workflow class="size-3 text-white" />
+              </div>
             {/if}
 
             {#if state?.muted || state?.deafened}

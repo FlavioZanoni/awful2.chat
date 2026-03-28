@@ -20,7 +20,7 @@ export interface Room {
   createdAt: number;
   pfpData?: ArrayBuffer; // local upload — blobURL generated at runtime, never stored
   pfpURL?: string; // external URL (tenor, giphy, etc) — stored as-is
-  // pfpData and pfpURL are mutually exclusive
+  participants: string[]; // DIDs of users in the room (stable identity)
 }
 
 export interface DMRoom extends Room {
@@ -424,7 +424,47 @@ export async function getDMRooms(): Promise<DMRoom[]> {
 
 export async function putRoom(room: Room | DMRoom): Promise<void> {
   const database = await getDB();
-  await database.put("rooms", room);
+  const roomWithParticipants = {
+    ...room,
+    participants: room.participants ?? [],
+  };
+  await database.put("rooms", roomWithParticipants);
+}
+
+export async function getRoomParticipants(
+  roomCode: string
+): Promise<string[]> {
+  const database = await getDB();
+  const room = await database.get("rooms", roomCode);
+  return room?.participants ?? [];
+}
+
+export async function addRoomParticipant(
+  roomCode: string,
+  peerId: string
+): Promise<void> {
+  const database = await getDB();
+  const tx = database.transaction("rooms", "readwrite");
+  const room = await tx.store.get(roomCode);
+  if (!room) return;
+  const participants = new Set(room.participants ?? []);
+  participants.add(peerId);
+  await tx.store.put({ ...room, participants: [...participants] });
+  await tx.done;
+}
+
+export async function removeRoomParticipant(
+  roomCode: string,
+  peerId: string
+): Promise<void> {
+  const database = await getDB();
+  const tx = database.transaction("rooms", "readwrite");
+  const room = await tx.store.get(roomCode);
+  if (!room) return;
+  const participants = new Set(room.participants ?? []);
+  participants.delete(peerId);
+  await tx.store.put({ ...room, participants: [...participants] });
+  await tx.done;
 }
 
 /**

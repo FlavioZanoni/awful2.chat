@@ -12,7 +12,7 @@
     CardTitle,
   } from "$lib/components/ui/card";
   import AvatarPickerDialog from "$lib/components/AvatarPickerDialog.svelte";
-  import { profileStore, loadProfile } from "$lib/profile.svelte";
+  import { profileStore, loadProfile, saveName } from "$lib/profile.svelte";
   import type { KeypairRecord } from "$lib/identity";
   import { enroll } from "$lib/identity.svelte";
   import { ArrowLeft, Smartphone } from "@lucide/svelte";
@@ -115,6 +115,7 @@
   }
 
   function handleFinish() {
+    saveName(profileStore.nickname);
     if (
       identityStore.webAuthnCapabilities?.supported &&
       identityStore.webAuthnCapabilities?.canEnroll

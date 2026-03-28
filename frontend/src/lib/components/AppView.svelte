@@ -6,13 +6,14 @@
   import RoomCreateJoin from "$lib/components/RoomCreateJoin.svelte";
   import ChatView from "$lib/components/ChatView.svelte";
   import RoomSidebar from "$lib/components/RoomSidebar.svelte";
-  import {
-    transportState,
-    joinRoom,
-    leaveRoom,
-    selfId,
-    setRoomName,
-  } from "$lib/transport.svelte";
+import {
+	transportState,
+	joinRoom,
+	leaveRoom,
+	switchRoom,
+	selfId,
+	setRoomName,
+} from "$lib/transport.svelte";
   import {
     roomsStore,
     loadRooms,
@@ -113,16 +114,16 @@
     }
   }
 
-  function handleSelectRoom(code: string) {
-    if (code === activeRoomCode) {
-      sidebarOpen = false;
-      return;
-    }
-    leaveRoom();
-    const room = roomsStore.rooms.find((r) => r.roomCode === code);
-    handleJoin(code, "", room?.name);
-    sidebarOpen = false;
-  }
+function handleSelectRoom(code: string) {
+	if (code === activeRoomCode) {
+		sidebarOpen = false;
+		return;
+	}
+	switchRoom();
+	const room = roomsStore.rooms.find((r) => r.roomCode === code);
+	handleJoin(code, "", room?.name);
+	sidebarOpen = false;
+}
 
   function openCreateJoin() {
     createJoinOpen = true;
