@@ -20,8 +20,12 @@ export interface Room {
   createdAt: number;
   pfpData?: ArrayBuffer; // local upload — blobURL generated at runtime, never stored
   pfpURL?: string; // external URL (tenor, giphy, etc) — stored as-is
-  // pfpData and pfpURL are mutually exclusive
+  participants: string[]; // DIDs of users in the room (stable identity)
+  participantLastSeen?: Record<string, number>; // DID -> timestamp of last seen
 }
+
+const PARTICIPANT_INACTIVE_DAYS = 7;
+const PARTICIPANT_INACTIVE_MS = PARTICIPANT_INACTIVE_DAYS * 24 * 60 * 60 * 1000;
 
 export interface DMRoom extends Room {
   type: "dm";
@@ -424,7 +428,99 @@ export async function getDMRooms(): Promise<DMRoom[]> {
 
 export async function putRoom(room: Room | DMRoom): Promise<void> {
   const database = await getDB();
-  await database.put("rooms", room);
+  const roomWithParticipants = {
+    ...room,
+    participants: room.participants ?? [],
+  };
+  await database.put("rooms", roomWithParticipants);
+}
+
+export async function getRoomParticipants(roomCode: string): Promise<string[]> {
+  const database = await getDB();
+  const room = await database.get("rooms", roomCode);
+  return room?.participants ?? [];
+}
+
+export async function addRoomParticipant(
+  roomCode: string,
+  peerId: string
+): Promise<void> {
+  const database = await getDB();
+  const tx = database.transaction("rooms", "readwrite");
+  const room = await tx.store.get(roomCode);
+  if (!room) return;
+  const participants = new Set(room.participants ?? []);
+  participants.add(peerId);
+  const participantLastSeen = room.participantLastSeen ?? {};
+  participantLastSeen[peerId] = Date.now();
+  await tx.store.put({
+    ...room,
+    participants: [...participants],
+    participantLastSeen,
+  });
+  await tx.done;
+}
+
+export async function updateParticipantLastSeen(
+  roomCode: string,
+  peerId: string
+): Promise<void> {
+  const database = await getDB();
+  const tx = database.transaction("rooms", "readwrite");
+  const room = await tx.store.get(roomCode);
+  if (!room) return;
+  const participantLastSeen = room.participantLastSeen ?? {};
+  participantLastSeen[peerId] = Date.now();
+  await tx.store.put({ ...room, participantLastSeen });
+  await tx.done;
+}
+
+export async function removeRoomParticipant(
+  roomCode: string,
+  peerId: string
+): Promise<void> {
+  const database = await getDB();
+  const tx = database.transaction("rooms", "readwrite");
+  const room = await tx.store.get(roomCode);
+  if (!room) return;
+  const participants = new Set(room.participants ?? []);
+  participants.delete(peerId);
+  const participantLastSeen = room.participantLastSeen ?? {};
+  delete participantLastSeen[peerId];
+  await tx.store.put({
+    ...room,
+    participants: [...participants],
+    participantLastSeen,
+  });
+  await tx.done;
+}
+
+export async function cleanupInactiveParticipants(
+  roomCode: string
+): Promise<string[]> {
+  const database = await getDB();
+  const tx = database.transaction("rooms", "readwrite");
+  const room = await tx.store.get(roomCode);
+  if (!room) return [];
+  const cutoff = Date.now() - PARTICIPANT_INACTIVE_MS;
+  const participantLastSeen = room.participantLastSeen ?? {};
+  const removed: string[] = [];
+  const participants = new Set(room.participants ?? []);
+  for (const peerId of participants) {
+    const lastSeen = participantLastSeen[peerId] ?? 0;
+    if (lastSeen < cutoff) {
+      participants.delete(peerId);
+      delete participantLastSeen[peerId];
+      removed.push(peerId);
+    }
+  }
+  await tx.store.put({
+    ...room,
+    participants: [...participants],
+    participantLastSeen,
+  });
+  await tx.done;
+  return removed;
 }
 
 /**
@@ -674,27 +770,32 @@ export interface StorageMetrics {
 
 export async function getStorageMetrics(): Promise<StorageMetrics> {
   const database = await getDB();
-  
+
   const messages = await database.getAll("messages");
   const rooms = await database.getAll("rooms");
   const profiles = await database.getAll("profiles");
   const attachments = await database.getAll("attachments");
-  
-  const seedingCount = attachments.filter(a => a.status === "seeding").length;
-  
+
+  const seedingCount = attachments.filter((a) => a.status === "seeding").length;
+
   let storedSize = 0;
-  attachments.forEach(a => {
+  attachments.forEach((a) => {
     if (a.data) storedSize += a.data.byteLength;
   });
-  
-  const roomMetrics = rooms.slice(0, 5).map(room => {
-    const roomMessages = messages.filter(m => m.roomCode === (room as Room | DMRoom).roomCode).length;
-    return {
-      name: (room as Room | DMRoom).name || (room as Room | DMRoom).roomCode,
-      messageCount: roomMessages
-    };
-  }).sort((a, b) => b.messageCount - a.messageCount);
-  
+
+  const roomMetrics = rooms
+    .slice(0, 5)
+    .map((room) => {
+      const roomMessages = messages.filter(
+        (m) => m.roomCode === (room as Room | DMRoom).roomCode
+      ).length;
+      return {
+        name: (room as Room | DMRoom).name || (room as Room | DMRoom).roomCode,
+        messageCount: roomMessages,
+      };
+    })
+    .sort((a, b) => b.messageCount - a.messageCount);
+
   return {
     totalMessages: messages.length,
     totalRooms: rooms.length,
@@ -702,6 +803,6 @@ export async function getStorageMetrics(): Promise<StorageMetrics> {
     seedingAttachments: seedingCount,
     totalAttachments: attachments.length,
     storedDataSize: storedSize,
-    rooms: roomMetrics
+    rooms: roomMetrics,
   };
 }

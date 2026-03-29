@@ -1,41 +1,44 @@
 services:
-  signal:
+  relay:
     build:
-      context: ./signal
+      context: ./relay
     restart: unless-stopped
     expose:
       - "8080"
+      - "8081"
     environment:
-      NODE_ENV: production
-      KLIPY_API_KEY: ${KLIPY_API_KEY}
+      - HTTP_PORT=8080
+      - KLIPY_API_KEY=${KLIPY_API_KEY}
+      - NODE_ENV=production
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - relay_data:/app/data
     networks:
       - dokploy-network
-
-  coturn:
-    image: coturn/coturn:latest
-    restart: unless-stopped
-    command: >
-      --log-file=stdout
-      --verbose
-      --realm=awful.frav.in
-      --external-ip=${ANNOUNCED_IP}
-      --listening-ip=0.0.0.0
-      --lt-cred-mech
-      --user=awful:awful
-      --fingerprint
-      --no-multicast-peers
-      --alt-listening-port=5349
-      --denied-peer-ip=10.0.0.0-10.255.255.255
-      --denied-peer-ip=192.168.0.0-192.168.255.255
-      --denied-peer-ip=172.16.0.0-172.31.255.255
-      --min-port=49152
-      --max-port=49202
-    ports:
-      - "3478:3478/tcp"
-      - "3478:3478/udp"
-      - "49152-49202:49152-49202/udp"
-    networks:
-      - dokploy-network
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.relay-http.rule=Host(`relay.${DOMAIN}`)
+      - traefik.http.routers.relay-http.entrypoints=web
+      - traefik.http.routers.relay-http.middlewares=relay-redirect
+      - traefik.http.routers.relay-https.rule=Host(`relay.${DOMAIN}`)
+      - traefik.http.routers.relay-https.entrypoints=websecure
+      - traefik.http.routers.relay-https.tls=true
+      - traefik.http.routers.relay-https.tls.certresolver=letsencrypt
+      - traefik.http.services.relay-service.loadbalancer.server.port=8080
+      - traefik.http.routers.relay-https.service=relay-service
+      - traefik.http.routers.relay-http.service=relay-service
+      - traefik.http.middlewares.relay-redirect.redirectscheme.scheme=https
+      - traefik.http.routers.og.rule=Host(`relay.${DOMAIN}`) && PathPrefix(`/og`)
+      - traefik.http.routers.og.entrypoints=websecure
+      - traefik.http.routers.og.tls=true
+      - traefik.http.routers.og.tls.certresolver=letsencrypt
+      - traefik.http.routers.og.service=relay-api-service
+      - traefik.http.services.relay-api-service.loadbalancer.server.port=8081
+      - traefik.http.routers.klipy.rule=Host(`relay.${DOMAIN}`) && PathPrefix(`/klipy`)
+      - traefik.http.routers.klipy.entrypoints=websecure
+      - traefik.http.routers.klipy.tls=true
+      - traefik.http.routers.klipy.tls.certresolver=letsencrypt
+      - traefik.http.routers.klipy.service=relay-api-service
 
   sfu:
     build:
@@ -58,28 +61,31 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        - VITE_SIGNAL_URL=${VITE_SIGNAL_URL}
+        - VITE_API_URL=${VITE_API_URL}
+        - VITE_RELAY_MULTIADDR=${VITE_RELAY_MULTIADDR}
     restart: unless-stopped
-    expose:
-      - "80"
     depends_on:
-      - signal
-      - sfu
-      - coturn
+      - relay
     networks:
       - dokploy-network
     labels:
       - traefik.enable=true
-      - traefik.http.routers.awful-http.rule=Host(`${DOMAIN}`)
-      - traefik.http.routers.awful-http.entrypoints=web
-      - traefik.http.routers.awful-http.middlewares=awful-redirect
-      - traefik.http.middlewares.awful-redirect.redirectscheme.scheme=https
-      - traefik.http.routers.awful-https.rule=Host(`${DOMAIN}`)
-      - traefik.http.routers.awful-https.entrypoints=websecure
-      - traefik.http.routers.awful-https.tls=true
-      - traefik.http.routers.awful-https.tls.certresolver=letsencrypt
-      - traefik.http.services.awful-service.loadbalancer.server.port=80
-      - traefik.http.routers.awful-https.service=awful-service
-      - traefik.http.routers.awful-http.service=awful-service
+      - traefik.http.routers.awful2-http.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.awful2-http.entrypoints=web
+      - traefik.http.routers.awful2-http.middlewares=awful2-redirect
+      - traefik.http.middlewares.awful2-redirect.redirectscheme.scheme=https
+      - traefik.http.routers.awful2-https.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.awful2-https.entrypoints=websecure
+      - traefik.http.routers.awful2-https.tls=true
+      - traefik.http.routers.awful2-https.tls.certresolver=letsencrypt
+      - traefik.http.services.awful2-service.loadbalancer.server.port=80
+      - traefik.http.routers.awful2-https.service=awful2-service
+      - traefik.http.routers.awful2-http.service=awful2-service
+
+volumes:
+  relay_data:
 
 networks:
   dokploy-network:

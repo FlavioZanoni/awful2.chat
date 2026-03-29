@@ -9,6 +9,10 @@ export enum MessageType {
   CallPresence = "call_presence",
   CallState = "call_state",
   RoomName = "room_name",
+  // room users — wire only, never persisted
+  JoinRoom = "join_room",
+  LeaveRoom = "leave_room",
+  RoomUsersSync = "room_users_sync",
   // sync — wire only, never persisted
   SyncDigest = "sync_digest",
   SyncBatch = "sync_batch",
@@ -145,6 +149,21 @@ export interface WireRoomName {
   name: string;
 }
 
+export interface WireJoinRoom {
+  type: MessageType.JoinRoom;
+  peerId: string;
+}
+
+export interface WireLeaveRoom {
+  type: MessageType.LeaveRoom;
+  peerId: string;
+}
+
+export interface WireRoomUsersSync {
+  type: MessageType.RoomUsersSync;
+  participants: string[];
+}
+
 // ── Sync wire messages ────────────────────────────────────────────────────────
 
 export interface WireSyncDigest {
@@ -185,6 +204,9 @@ export type AnyWireMessage =
   | WireCallPresence
   | WireCallState
   | WireRoomName
+  | WireJoinRoom
+  | WireLeaveRoom
+  | WireRoomUsersSync
   | WireSyncDigest
   | WireSyncBatch
   | WireSyncComplete

@@ -58,6 +58,8 @@ export async function saveRoom(roomCode: string, name: string): Promise<void> {
     type: "text",
     lastSeenLamport: 0,
     createdAt: Date.now(),
+    participants: [],
+    participantLastSeen: {},
   };
 
   await putRoom(room);

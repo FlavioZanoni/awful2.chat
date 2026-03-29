@@ -1,5 +1,3 @@
-import { SimplePeerTransport } from "./transport/simplepeer/transport";
-import { SimplePeerVoice } from "./transport/simplepeer/voice";
 import { MediasoupVideo } from "./transport/mediasoup";
 import type { VideoSource } from "./transport/types";
 import { identityStore } from "./identity.svelte";
@@ -35,6 +33,11 @@ import {
   getAttachmentsByInfoHash,
   getAttachmentsByMessage,
   updateAttachmentStatus,
+  getRoomParticipants,
+  addRoomParticipant,
+  removeRoomParticipant,
+  updateParticipantLastSeen,
+  cleanupInactiveParticipants,
 } from "./storage";
 import {
   MessageType,
@@ -57,6 +60,8 @@ import type {
   FileDescriptor,
   FileTransferSnapshot,
 } from "./transport/types";
+import { LibP2PTransport } from "./transport/libp2p/transport";
+import { LibP2PVoice } from "./transport/libp2p/voice";
 
 export type { Message };
 
@@ -72,9 +77,11 @@ export interface ParticipantState {
 
 interface TransportState {
   connected: boolean;
+  connecting: boolean;
   roomCode: string | null;
   roomName: string;
   peers: string[];
+  roomUsers: string[];
   messages: Message[];
   inCall: boolean;
   muted: boolean;
@@ -100,9 +107,11 @@ interface TransportState {
 
 export const transportState = $state<TransportState>({
   connected: false,
+  connecting: false,
   roomCode: null,
   roomName: "",
   peers: [],
+  roomUsers: [],
   messages: [],
   inCall: false,
   muted: false,
@@ -135,8 +144,8 @@ const MAX_PERSISTED_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const _peerIdToDid = new Map<string, string>();
 const _seededByFingerprint = new Map<string, FileDescriptor>();
 
-const _transport = new SimplePeerTransport();
-const _voice = new SimplePeerVoice(_transport);
+const _transport = new LibP2PTransport();
+const _voice = new LibP2PVoice(_transport);
 const _video = new MediasoupVideo();
 const _fileTransport = new WebTorrentFileTransport(() => _transport.selfId());
 
@@ -257,6 +266,31 @@ function _sendRoomName(peerId?: string): void {
   else _transport.broadcast(payload);
 }
 
+async function _sendProfile(peerId?: string): Promise<void> {
+  const profile = await getOwnProfile();
+  const name = profile?.nickname?.trim() || "Anonymous";
+  const did = identityStore.did ?? null;
+  let avatarUrl: string | null = profile?.pfpURL || null;
+  if (!avatarUrl && profile?.pfpData) {
+    const bytes = new Uint8Array(profile.pfpData);
+    const binary = Array.from(bytes)
+      .map((b) => String.fromCharCode(b))
+      .join("");
+    avatarUrl = `data:image/jpeg;base64,${btoa(binary)}`;
+  }
+
+  if (peerId) {
+    _transport.send(
+      peerId,
+      encode({ type: MessageType.Profile, name, did, avatarUrl })
+    );
+    return;
+  }
+  _transport.broadcast(
+    encode({ type: MessageType.Profile, name, did, avatarUrl })
+  );
+}
+
 async function _broadcastProfile(): Promise<void> {
   try {
     const profile = await getOwnProfile();
@@ -279,7 +313,11 @@ async function _broadcastProfile(): Promise<void> {
 async function _sendDigest(peerId: string): Promise<void> {
   if (!transportState.roomCode) return;
   const watermarks = await getWatermarksForRoom(transportState.roomCode);
-  _transport.send(peerId, encode({ type: MessageType.SyncDigest, watermarks }));
+  console.log("[sync] sending digest to", peerId, watermarks);
+  await _transport.send(
+    peerId,
+    encode({ type: MessageType.SyncDigest, watermarks })
+  );
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
@@ -330,12 +368,16 @@ async function _handleDigest(
   if (!transportState.roomCode) return;
   const mine = await getWatermarksForRoom(transportState.roomCode);
 
-  // Push what they're missing — they'll do the same for us when they receive our digest
-  const theyAreMissingSenders = Object.keys(mine).filter(
+  console.log("[sync] my watermarks:", mine);
+  console.log("[sync] their watermarks:", theirWatermarks);
+
+  const theyAreMissing = Object.keys(mine).filter(
     (sid) => (theirWatermarks[sid] ?? -1) < mine[sid]
   );
 
-  if (theyAreMissingSenders.length > 0) {
+  console.log("[sync] they are missing senders:", theyAreMissing);
+
+  if (theyAreMissing.length > 0) {
     await _pushMissingTo(peerId, theirWatermarks);
   }
 }
@@ -346,11 +388,11 @@ async function _pushMissingTo(
 ): Promise<void> {
   if (!transportState.roomCode) return;
   const all = await getAllMessages(transportState.roomCode);
+  const missing = all.filter(
+    (m) => m.lamport > (theirWatermarks[m.senderId] ?? -1)
+  );
 
-  const missing = all
-    .filter((m) => m.lamport > (theirWatermarks[m.senderId] ?? -1))
-    .map(messageToWire);
-
+  console.log("[sync] pushing", missing.length, "messages to", peerId);
   if (!missing.length) return;
 
   const batches: WireChatMessage[][] = [];
@@ -487,6 +529,52 @@ function _handleCallState(peerId: string, msg: WireCallState): void {
 function _handleRoomName(name: string): void {
   const trimmed = name.trim().slice(0, 64);
   if (trimmed.length > 0) transportState.roomName = trimmed;
+}
+
+function _handleJoinRoom(peerId: string): void {
+  if (!transportState.roomCode) return;
+  if (!peerId) return;
+  const uniqueUsers = [...new Set(transportState.roomUsers)];
+  if (!uniqueUsers.includes(peerId)) {
+    uniqueUsers.push(peerId);
+    transportState.roomUsers = uniqueUsers;
+    addRoomParticipant(transportState.roomCode, peerId).catch(() => {});
+  }
+}
+
+function _handleLeaveRoom(peerId: string): void {
+  // Explicit leave - remove user from room list AND from peerId->DID mapping
+  if (!transportState.roomCode) return;
+  const currentUsers = new Set(transportState.roomUsers);
+  if (currentUsers.has(peerId)) {
+    currentUsers.delete(peerId);
+    transportState.roomUsers = [...currentUsers];
+    removeRoomParticipant(transportState.roomCode, peerId).catch(() => {});
+  }
+  // Clean up the peerId->DID mapping when user explicitly leaves
+  _peerIdToDid.delete(peerId);
+}
+
+function _handleRoomUsersSync(participants: string[]): void {
+  if (!transportState.roomCode) return;
+  const selfDid = identityStore.did ?? _transport.selfId();
+  const merged = new Set([...transportState.roomUsers, ...participants]);
+  if (selfDid) merged.add(selfDid);
+  transportState.roomUsers = [...merged];
+}
+
+function _broadcastJoinRoom(): void {
+  const selfDid = identityStore.did ?? _transport.selfId();
+  if (!selfDid || !transportState.roomCode) return;
+  _transport.broadcast(encode({ type: MessageType.JoinRoom, peerId: selfDid }));
+}
+
+function _broadcastLeaveRoom(): void {
+  const selfDid = identityStore.did ?? _transport.selfId();
+  if (!selfDid || !transportState.roomCode) return;
+  _transport.broadcast(
+    encode({ type: MessageType.LeaveRoom, peerId: selfDid })
+  );
 }
 
 function _handleChatMessage(
@@ -703,16 +791,27 @@ _fileTransport.on("downloaded", (infoHash, blob) => {
 _transport.on("connect", (peerId) => {
   transportState.peers = _transport.peers();
   _fileTransport.onPeerConnect(peerId);
-  _broadcastProfile().catch(() => {});
+  _sendProfile(peerId);
   _sendRoomName(peerId);
   if (transportState.inCall) _sendCallPresence(peerId);
   if (transportState.inCall) _sendCallState(peerId);
-  _sendDigest(peerId).catch(() => {});
+  _sendDigest(peerId);
+  const selfDid = identityStore.did ?? _transport.selfId();
+  const participants = [...new Set([...transportState.roomUsers, selfDid])];
+  _transport.send(
+    peerId,
+    encode({ type: MessageType.RoomUsersSync, participants })
+  );
 });
 
 _transport.on("disconnect", (peerId) => {
   transportState.peers = _transport.peers();
   _fileTransport.onPeerDisconnect(peerId);
+
+  // Note: We intentionally do NOT delete the peerId->DID mapping here.
+  // The mapping is kept so we can still identify which DID a peerId
+  // belonged to for offline user tracking. The mapping is only removed
+  // when we receive an explicit LeaveRoom message.
 
   const parts = new Map(transportState.participants);
   parts.delete(peerId);
@@ -725,17 +824,6 @@ _transport.on("disconnect", (peerId) => {
   const callStates = new Map(transportState.callPeerStates);
   callStates.delete(peerId);
   transportState.callPeerStates = callStates;
-
-  const did = _peerIdToDid.get(peerId);
-  if (did) {
-    const names = new Map(transportState.peerNames);
-    const avatars = new Map(transportState.peerAvatars);
-    names.delete(did);
-    avatars.delete(did);
-    transportState.peerNames = names;
-    transportState.peerAvatars = avatars;
-    _peerIdToDid.delete(peerId);
-  }
 
   const sfuNext = new Set(transportState.sfuPeerIds);
   sfuNext.delete(peerId);
@@ -766,6 +854,12 @@ _transport.on("message", (peerId, data) => {
       return;
     }
 
+    // Update last seen for this peer
+    const did = _peerIdToDid.get(peerId);
+    if (did && transportState.roomCode) {
+      updateParticipantLastSeen(transportState.roomCode, did).catch(() => {});
+    }
+
     const msg = decoded as AnyWireMessage;
 
     switch (msg.type) {
@@ -781,13 +875,25 @@ _transport.on("message", (peerId, data) => {
       case MessageType.RoomName:
         _handleRoomName(msg.name);
         break;
+      case MessageType.JoinRoom:
+        _handleJoinRoom(msg.peerId);
+        break;
+      case MessageType.LeaveRoom:
+        _handleLeaveRoom(msg.peerId);
+        break;
+      case MessageType.RoomUsersSync:
+        _handleRoomUsersSync(msg.participants);
+        break;
       case MessageType.SyncDigest:
+        console.log("[sync] received digest from", peerId, msg.watermarks);
         _handleDigest(peerId, msg.watermarks).catch(() => {});
         break;
       case MessageType.SyncBatch:
+        console.log("[sync] received batch from", peerId, msg.messages.length);
         _handleSyncBatch(msg.messages).catch(() => {});
         break;
       case MessageType.SyncComplete:
+        console.log("[sync] complete from", peerId);
         _handleSyncComplete(peerId);
         break;
       case MessageType.Text:
@@ -797,7 +903,9 @@ _transport.on("message", (peerId, data) => {
         _handleChatMessage(msg, peerId);
         break;
     }
-  } catch {}
+  } catch (e) {
+    console.warn("[app] message decode failed", e, data);
+  }
 });
 
 // ── Voice events ──────────────────────────────────────────────────────────────
@@ -950,23 +1058,57 @@ _video.on("error", (err) => {
 
 export async function joinRoom(roomCode: string): Promise<void> {
   transportState.error = null;
+  transportState.connecting = true;
   try {
     await _loadHistory(roomCode);
     await _hydrateFileTransfersFromStorage(roomCode);
     await _transport.connect(roomCode);
     transportState.connected = true;
+    transportState.connecting = false;
     transportState.roomCode = roomCode;
     transportState.roomName = "";
     transportState.peers = _transport.peers();
+    const selfDid = identityStore.did ?? _transport.selfId();
+    const savedParticipants = await getRoomParticipants(roomCode);
+    // Clean up inactive participants (not seen in 7 days)
+    const removedInactive = await cleanupInactiveParticipants(roomCode);
+    if (removedInactive.length > 0) {
+      console.log("[room] removed inactive participants:", removedInactive);
+    }
+    const participants = new Set(
+      savedParticipants.filter((p) => !removedInactive.includes(p))
+    );
+    participants.add(selfDid);
+    transportState.roomUsers = [...participants];
+    await addRoomParticipant(roomCode, selfDid);
     await _resumeAttachmentSeeding(roomCode);
     await _broadcastProfile();
+    _broadcastJoinRoom();
   } catch (err) {
     transportState.error = err instanceof Error ? err.message : String(err);
+    transportState.connecting = false;
     throw err;
   }
 }
 
 export function leaveRoom(): void {
+  _broadcastLeaveRoomAndDisconnect();
+}
+
+export function switchRoom(): void {
+  _disconnectWithoutBroadcasting();
+}
+
+function _broadcastLeaveRoomAndDisconnect(): void {
+  const roomCode = transportState.roomCode;
+  const selfDid = identityStore.did ?? _transport.selfId();
+  if (roomCode && selfDid) {
+    _broadcastLeaveRoom();
+  }
+  _disconnectWithoutBroadcasting();
+}
+
+function _disconnectWithoutBroadcasting(): void {
   for (const transfer of transportState.fileTransfers.values()) {
     if (transfer.blobURL) URL.revokeObjectURL(transfer.blobURL);
   }
@@ -1229,6 +1371,14 @@ export function setRoomName(name: string): void {
 
 export function selfId(): string {
   return identityStore.did ?? _transport.selfId();
+}
+
+export function peerId(): string {
+  return _transport.selfId();
+}
+
+export function isRelayed(peerId: string): boolean {
+  return _transport.isRelayed(peerId);
 }
 
 export function peerIdToDid(peerId: string): string {

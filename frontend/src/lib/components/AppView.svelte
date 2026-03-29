@@ -6,13 +6,14 @@
   import RoomCreateJoin from "$lib/components/RoomCreateJoin.svelte";
   import ChatView from "$lib/components/ChatView.svelte";
   import RoomSidebar from "$lib/components/RoomSidebar.svelte";
-  import {
-    transportState,
-    joinRoom,
-    leaveRoom,
-    selfId,
-    setRoomName,
-  } from "$lib/transport.svelte";
+import {
+	transportState,
+	joinRoom,
+	leaveRoom,
+	switchRoom,
+	selfId,
+	setRoomName,
+} from "$lib/transport.svelte";
   import {
     roomsStore,
     loadRooms,
@@ -65,7 +66,6 @@
   let sidebarOpen = $state(false);
   let joinError = $state<string | null>(null);
   let createJoinOpen = $state(false);
-  let isMobile = $state(false);
   let incomingSharedFiles = $state<File[]>([]);
   let incomingSharedText = $state("");
 
@@ -114,16 +114,16 @@
     }
   }
 
-  function handleSelectRoom(code: string) {
-    if (code === activeRoomCode) {
-      sidebarOpen = false;
-      return;
-    }
-    leaveRoom();
-    const room = roomsStore.rooms.find((r) => r.roomCode === code);
-    handleJoin(code, "", room?.name);
-    sidebarOpen = false;
-  }
+function handleSelectRoom(code: string) {
+	if (code === activeRoomCode) {
+		sidebarOpen = false;
+		return;
+	}
+	switchRoom();
+	const room = roomsStore.rooms.find((r) => r.roomCode === code);
+	handleJoin(code, "", room?.name);
+	sidebarOpen = false;
+}
 
   function openCreateJoin() {
     createJoinOpen = true;
@@ -159,17 +159,6 @@
 
   const myId = $derived(selfId());
   const hasSidebar = $derived(roomsStore.rooms.length > 0);
-
-  $effect(() => {
-    if (typeof window === "undefined") return;
-    const media = window.matchMedia("(max-width: 639px)");
-    const update = () => {
-      isMobile = media.matches;
-    };
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  });
 </script>
 
 <svelte:window onpopstate={handlePopState} />
@@ -226,7 +215,9 @@
           />
         {:else}
           {#if incomingSharedFiles.length > 0 || incomingSharedText}
-            <Dialog.Root open={incomingSharedFiles.length > 0 || !!incomingSharedText}>
+            <Dialog.Root
+              open={incomingSharedFiles.length > 0 || !!incomingSharedText}
+            >
               <Dialog.Portal>
                 <Dialog.Overlay
                   class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
