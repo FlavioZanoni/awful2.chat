@@ -624,7 +624,6 @@
   section {
     min-height: 100vh;
     position: relative;
-    scroll-snap-align: start;
   }
 
   section:last-of-type {
@@ -1132,11 +1131,6 @@
   }
 
   /* Responsive */
-  @media (min-width: 769px) {
-    .app {
-      scroll-snap-type: y proximity;
-    }
-  }
 
   @media (max-width: 900px) {
     .grid-2col {
