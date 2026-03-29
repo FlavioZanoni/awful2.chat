@@ -4,9 +4,9 @@ services:
       context: ./relay
     restart: unless-stopped
     expose:
-      - "3000"
+      - "9000"
     environment:
-      - HTTP_PORT=3000
+      - HTTP_PORT=8080
       - KLIPY_API_KEY=${KLIPY_API_KEY}
       - NODE_ENV=production
       - DOMAIN=${DOMAIN}
@@ -23,7 +23,7 @@ services:
       - traefik.http.routers.relay-https.entrypoints=websecure
       - traefik.http.routers.relay-https.tls=true
       - traefik.http.routers.relay-https.tls.certresolver=letsencrypt
-      - traefik.http.services.relay-service.loadbalancer.server.port=3000
+      - traefik.http.services.relay-service.loadbalancer.server.port=8080
       - traefik.http.routers.relay-https.service=relay-service
       - traefik.http.routers.relay-http.service=relay-service
       - traefik.http.middlewares.relay-redirect.redirectscheme.scheme=https
