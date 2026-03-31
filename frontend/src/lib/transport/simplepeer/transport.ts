@@ -1,6 +1,6 @@
 import SimplePeer from "simple-peer";
 import type { PeerTransport, TransportEvents } from "../types";
-import type { SimplePeerExtension } from "./types";
+import { defaultIceServerList } from "../ice-server-list";
 
 interface SignalMessage {
   type: "signal";
@@ -21,6 +21,18 @@ interface PeerLeftMessage {
 }
 
 type ServerMessage = SignalMessage | PeerJoinedMessage | PeerLeftMessage;
+
+export interface SimplePeerExtension {
+  addStream(peerId: string, stream: MediaStream): void;
+  removeStream(peerId: string, stream: MediaStream): void;
+  onStream(handler: (peerId: string, stream: MediaStream) => void): void;
+  /**
+   * Called by VoiceTransport to register a stream that should be included
+   * when a NEW peer connection is created (i.e. when peer-joined fires while
+   * already in a call). Avoids mid-connection renegotiation via addStream.
+   */
+  setInitialStreams(streams: MediaStream[]): void;
+}
 
 export class SimplePeerTransport implements PeerTransport, SimplePeerExtension {
   private peerMap = new Map<string, SimplePeer.Instance>();
@@ -155,42 +167,7 @@ export class SimplePeerTransport implements PeerTransport, SimplePeerExtension {
       streams: [...this.initialStreams],
       config: {
         iceCandidatePoolSize: 10,
-        iceServers: [
-          // Public STUN servers - use multiple for redundancy
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          { urls: "stun:stun2.l.google.com:19302" },
-          { urls: "stun:stun3.l.google.com:19302" },
-          { urls: "stun:stun4.l.google.com:19302" },
-          { urls: "stun:openrelay.metered.ca:80" },
-          { urls: "stun:stun.twilio.com:3478" },
-          // TURN servers - REQUIRED for mobile/CGNAT connections
-          {
-            urls: [
-              "turn:awful.frav.in:3478?transport=udp",
-              "turn:awful.frav.in:3478?transport=tcp",
-              "turn:awful.frav.in:5349?transport=tcp",
-            ],
-            username: "awful",
-            credential: "awful",
-          },
-          // Free public TURN as fallback (may have rate limits)
-          {
-            urls: "turn:openrelay.metered.ca:80",
-            username: "openrelayproject",
-            credential: "openrelayproject",
-          },
-          {
-            urls: "turn:openrelay.metered.ca:443",
-            username: "openrelayproject",
-            credential: "openrelayproject",
-          },
-          {
-            urls: "turn:openrelay.metered.ca:443?transport=tcp",
-            username: "openrelayproject",
-            credential: "openrelayproject",
-          },
-        ],
+        iceServers: defaultIceServerList,
       },
     });
 

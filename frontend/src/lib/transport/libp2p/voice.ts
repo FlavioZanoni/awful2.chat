@@ -4,6 +4,7 @@ import type { StreamMessageEvent, StreamCloseEvent } from "@libp2p/interface";
 import type { VoiceTransport, VoiceEvents } from "../types";
 import type { AppServices, LibP2PTransport } from "./transport";
 import type { DtlnProcessor } from "$lib/audio/dtln-processor";
+import { defaultIceServerList } from "../ice-server-list";
 
 const VOICE_PROTO = "/voice/1.0.0";
 
@@ -433,10 +434,8 @@ export class LibP2PVoice implements VoiceTransport {
     if (this.remotePeers.has(peerId)) return this.remotePeers.get(peerId)!;
 
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ],
+      iceCandidatePoolSize: 10,
+      iceServers: defaultIceServerList,
     });
 
     if (this.processedStream) {

@@ -8,6 +8,7 @@ import type {
   FileTransferSnapshot,
   FileTransferTransport,
 } from "../types";
+import { defaultIceServerList } from "../ice-server-list";
 
 type TorrentLike = {
   infoHash: string;
@@ -309,10 +310,8 @@ export class WebTorrentFileTransport implements FileTransferTransport {
       channelName: `wt:${infoHash}`,
       streams: [],
       config: {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ],
+        iceCandidatePoolSize: 10,
+        iceServers: defaultIceServerList,
       },
     });
 
