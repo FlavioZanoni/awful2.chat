@@ -157,6 +157,15 @@ export class LibP2PTransport implements PeerTransport {
       this.emit("connect", id);
     });
 
+    this.node.addEventListener(
+      "connection:open",
+      (evt: CustomEvent<Connection>) => {
+        const id = evt.detail.remotePeer.toString();
+        if (!this.connectedPeers.has(id)) return;
+        this.updateRelayedStatus(id);
+      }
+    );
+
     this.node.addEventListener("peer:disconnect", (evt) => {
       const id = evt.detail.toString();
       if (this.isRelayPeer(id)) return;
@@ -500,11 +509,13 @@ export class LibP2PTransport implements PeerTransport {
     const connections = this.node.getConnections(pid);
     if (!connections?.length) return;
 
-    const isRelayed = connections.some((c) =>
-      c.remoteAddr.toString().includes("/p2p-circuit")
-    );
-    if (isRelayed) this.relayedPeers.add(peerId);
-    else this.relayedPeers.delete(peerId);
+    const hasDirect = connections.some((c) => {
+      const addr = c.remoteAddr.toString();
+      return !addr.includes("/p2p-circuit");
+    });
+
+    if (hasDirect) this.relayedPeers.delete(peerId);
+    else this.relayedPeers.add(peerId);
   }
 
   private async peerIdFromRawKey(privateKeyBytes: Uint8Array) {

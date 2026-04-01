@@ -83,6 +83,13 @@ export default defineConfig({
             ],
           },
         } as const,
+        handle_links: "preferred",
+        protocol_handlers: [
+          {
+            protocol: "web+awfl",
+            url: "/r/%s", // web+awfl:a89f81 -> /r/a89f81 in PWA
+          },
+        ],
       },
     }),
   ],
