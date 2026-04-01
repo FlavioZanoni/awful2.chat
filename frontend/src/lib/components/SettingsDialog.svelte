@@ -126,28 +126,27 @@
 {#if isMobile}
   <Drawer bind:open onOpenChange={closeHandler} direction="bottom">
     <DrawerContent class="bg-card text-card-foreground border-border">
-      <div use:viewportHeight class="flex flex-col w-full">
-        <DrawerHeader class="px-4 py-3 border-b border-border shrink-0">
-          <DrawerTitle class="font-mono text-base font-semibold mx-auto"
-            >Settings</DrawerTitle
-          >
-        </DrawerHeader>
-        <div class="p-4 space-y-4 border-border overflow-y-auto flex-1">
-          {@render TabBar()}
-          <div class="pt-2">
-            {#if activeTab === "profile"}
-              <ProfileSettings
-                {isMobile}
-                onAvatarClick={() => (avatarDialogOpen = true)}
-              />
-            {:else if activeTab === "audio"}
-              <AudioSettings />
-            {:else if activeTab === "session"}
-              <SessionSettings {isMobile} {onClose} />
-            {:else if activeTab === "data"}
-              <DataSettings {activeTab} />
-            {/if}
-          </div>
+      <DrawerHeader class="px-4 py-2 bg-card sticky">
+        <DrawerTitle class="font-mono text-base font-semibold mx-auto"
+          >Settings</DrawerTitle
+        >
+        {@render TabBar()}
+      </DrawerHeader>
+      <div use:viewportHeight class="flex flex-col w-full overflow-hidden">
+        <div class="px-4 py-2 space-y-4 overflow-y-auto min-h-0">
+          {#if activeTab === "profile"}
+            <ProfileSettings
+              {isMobile}
+              {avatarDialogOpen}
+              onAvatarClick={() => (avatarDialogOpen = true)}
+            />
+          {:else if activeTab === "audio"}
+            <AudioSettings />
+          {:else if activeTab === "session"}
+            <SessionSettings {isMobile} {onClose} />
+          {:else if activeTab === "data"}
+            <DataSettings {activeTab} />
+          {/if}
         </div>
       </div>
     </DrawerContent>

@@ -79,7 +79,7 @@
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         }}
         placeholder="Display name"
-        class="bg-background border-input text-foreground placeholder:text-muted-foreground font-mono focus-visible:ring-ring text-center w-full max-w-50 md:max-w-80"
+        class="bg-background border-input text-foreground placeholder:text-muted-foreground font-mono focus-visible:ring-ring text-center w-full max-w-64 md:max-w-80"
       />
     </div>
   </div>
