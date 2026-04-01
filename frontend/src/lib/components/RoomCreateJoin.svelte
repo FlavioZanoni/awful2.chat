@@ -66,6 +66,10 @@
     try {
       const text = await navigator.clipboard.readText();
       joinCode = text.trim();
+      if (joinCode.includes("/r/")) {
+        const parts = joinCode.split("/r/");
+        joinCode = parts[parts.length - 1];
+      }
     } catch {
       // clipboard denied
     }
@@ -80,14 +84,16 @@
   <div
     class="flex min-h-screen h-full items-center justify-center p-4 bg-background"
   >
-    <Button
-      onclick={toggleSidebar}
-      variant="outline"
-      class="absolute top-4 left-4 md:hidden"
-      aria-label="Open sidebar"
-    >
-      <Menu />
-    </Button>
+    {#if toggleSidebar != null}
+      <Button
+        onclick={toggleSidebar}
+        variant="outline"
+        class="absolute top-4 left-4 md:hidden"
+        aria-label="Open sidebar"
+      >
+        <Menu />
+      </Button>
+    {/if}
     <Card class="w-full max-w-sm bg-card border-border text-card-foreground">
       <CardHeader>
         <div class="flex items-center justify-between">
@@ -182,7 +188,7 @@
           <div class="relative">
             <Input
               bind:value={joinCode}
-              placeholder="Room code"
+              placeholder="Room code or Room link"
               class="bg-background border-input text-foreground placeholder:text-muted-foreground font-mono pr-10 focus-visible:ring-ring"
             />
             <button

@@ -746,7 +746,7 @@
           size="icon"
           onclick={() => (showUserList = !showUserList)}
           aria-label="Toggle user list"
-          class="hidden sm:flex text-muted-foreground hover:text-foreground cursor-pointer {showUserList
+          class="flex text-muted-foreground hover:text-foreground cursor-pointer {showUserList
             ? 'text-primary'
             : ''}"
         >
@@ -1000,9 +1000,10 @@
       {/if}
     </div>
 
-    {#if showUserList}
-      <UserListSidebar />
-    {/if}
+    <UserListSidebar
+      open={showUserList}
+      onToggle={() => (showUserList = !showUserList)}
+    />
   </div>
 
   {#if !autoScroll && visibleMessages.length > 0}
