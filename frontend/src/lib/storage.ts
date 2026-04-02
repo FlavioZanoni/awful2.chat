@@ -8,7 +8,11 @@ import type {
   MessageStatus,
   PendingMessage,
 } from "./types/message";
-import type { KeypairRecord, MnemonicRecord, WebAuthnRecord } from "./identity";
+import type {
+  KeypairRecord,
+  MnemonicRecord,
+  WebAuthnRecord,
+} from "./identity/identity";
 
 export type RoomType = "text" | "voice" | "dm";
 
@@ -73,6 +77,7 @@ export interface SavedGif {
 
 export interface PhonebookEntry {
   peerId: string;
+  did?: string;
   nickname: string;
   addedAt: number;
   favorite?: boolean;
@@ -806,6 +811,17 @@ export async function putPhonebookEntry(entry: PhonebookEntry): Promise<void> {
 export async function deletePhonebookEntry(peerId: string): Promise<void> {
   const database = await getDB();
   await database.delete("phonebook", peerId);
+}
+
+export async function togglePhonebookFavorite(
+  peerId: string
+): Promise<boolean> {
+  const database = await getDB();
+  const entry = await database.get("phonebook", peerId);
+  if (!entry) return false;
+  const newFavorite = !entry.favorite;
+  await database.put("phonebook", { ...entry, favorite: newFavorite });
+  return newFavorite;
 }
 
 export async function putWebAuthnRecord(record: WebAuthnRecord): Promise<void> {

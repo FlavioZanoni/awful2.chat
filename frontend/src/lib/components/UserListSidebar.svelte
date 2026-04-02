@@ -5,13 +5,16 @@
     didToPeerId,
     selfId,
     isRelayed,
+    getRoomUsers,
+  } from "$lib/transport/transport.svelte";
+  import { looksLikePeerId } from "$lib/identity/identity-utils";
+  import {
     openDmConversation,
     addToPhonebook,
     removeFromPhonebook,
-    getRoomUsers,
-  } from "$lib/transport.svelte";
+  } from "$lib/transport/dm.svelte";
   import { profileStore, loadProfile } from "$lib/profile.svelte";
-  import { identityStore } from "$lib/identity.svelte";
+  import { identityStore } from "$lib/identity/identity.svelte";
   import { UserPlus, UserRoundMinus, Users, Workflow } from "@lucide/svelte";
   import { roomsStore, refreshPhonebook } from "$lib/rooms.svelte";
   import { Badge } from "$lib/components/ui/badge";
@@ -125,10 +128,6 @@
 
   function getInitials(name: string): string {
     return name.charAt(0).toUpperCase();
-  }
-
-  function looksLikePeerId(value: string): boolean {
-    return value.startsWith("12D3") || value.startsWith("Qm");
   }
 
   let userMenu = $state<{ user: User; x: number; y: number } | null>(null);

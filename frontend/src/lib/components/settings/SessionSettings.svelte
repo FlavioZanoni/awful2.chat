@@ -10,7 +10,11 @@
   } from "$lib/components/ui/select";
   import { Switch } from "$lib/components/ui/switch";
   import { QrCode, Camera } from "@lucide/svelte";
-  import { enroll, identityStore, removeWebAuthn } from "$lib/identity.svelte";
+  import {
+    enroll,
+    identityStore,
+    removeWebAuthn,
+  } from "$lib/identity/identity.svelte";
 
   interface Props {
     isMobile?: boolean;

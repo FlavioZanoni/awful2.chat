@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { identityStore, init } from "$lib/identity.svelte";
+  import { identityStore, init } from "$lib/identity/identity.svelte";
   import AppView from "$lib/components/AppView.svelte";
   import Landing from "./Landing.svelte";
 
@@ -16,7 +16,7 @@
 
   $effect(() => {
     if (identityStore.initializing) return;
-    
+
     const pathname = window.location.pathname;
     const roomCode = parseRoomCode(pathname);
 
@@ -31,7 +31,7 @@
 
   function handlePopState() {
     if (identityStore.initializing) return;
-    
+
     const pathname = window.location.pathname;
     const roomCode = parseRoomCode(pathname);
 

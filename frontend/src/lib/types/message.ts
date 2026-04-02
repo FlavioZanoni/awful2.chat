@@ -1,3 +1,5 @@
+import type { FileSignalEnvelope } from "$lib/transport/types";
+
 export enum MessageType {
   // chat — persisted to IDB, sent over wire
   Text = "text",
@@ -194,6 +196,12 @@ export interface WireReadAck {
   type: MessageType.ReadAck;
   messageId: string;
   senderId: string;
+}
+
+// File wire
+export interface FileSignalWireMessage {
+  type: "__file_signal";
+  payload: FileSignalEnvelope;
 }
 
 // ── Union ─────────────────────────────────────────────────────────────────────

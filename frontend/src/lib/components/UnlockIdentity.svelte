@@ -4,7 +4,7 @@
     unlockWithBiometrics,
     identityStore,
     startAutoLogin,
-  } from "$lib/identity.svelte";
+  } from "$lib/identity/identity.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import {

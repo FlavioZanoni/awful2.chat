@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Message } from "$lib/transport.svelte";
+  import type { Message } from "$lib/transport/transport.svelte";
   import { MessageType } from "$lib/types/message";
   import {
     LogOut,
@@ -35,18 +35,20 @@
     sendMessage,
     selfId,
     didToPeerId,
-    openDmConversation,
-    addToPhonebook,
-    removeFromPhonebook,
-    joinCall,
     sendReply,
     sendFiles,
     toggleReaction,
     loadMoreMessages,
     markSeen,
     requestFileDownload,
-  } from "$lib/transport.svelte";
+  } from "$lib/transport/transport.svelte";
   import { roomsStore, refreshPhonebook } from "$lib/rooms.svelte";
+  import {
+    addToPhonebook,
+    openDmConversation,
+    removeFromPhonebook,
+  } from "$lib/transport/dm.svelte";
+  import { joinCall } from "$lib/transport/call.svelte";
 
   $effect(() => {
     loadProfile();
@@ -120,10 +122,8 @@
   const SWIPE_DIRECTION_RATIO = 1.25;
 
   let isMobile = $state(false);
-  let rootEl = $state<HTMLDivElement | null>(null);
   let messagesEl = $state<HTMLDivElement | null>(null);
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
-  let inputFocused = $state(false);
   let copied = $state(false);
   let autoScroll = $state(true);
   // Tracks whether the initial scroll-to-bottom on mount has happened
@@ -716,7 +716,9 @@
   }
 
   function isInPhonebook(peerId: string): boolean {
-    return roomsStore.phonebook.some((entry) => entry.peerId === peerId);
+    return roomsStore.phonebook.some(
+      (entry) => entry.peerId === peerId || entry.did === peerId
+    );
   }
 
   async function startDmFromMenu(peerId: string): Promise<void> {
@@ -753,7 +755,9 @@
   async function toggleActiveDmPhonebook(): Promise<void> {
     const peerId = transportState.activeDmPeerId;
     if (!peerId) return;
-    if (dmPeerInPhonebook) await removeFromPhonebook(peerId);
+    // Re-check current state to avoid stale closure issues
+    const currentlyInPhonebook = isInPhonebook(peerId);
+    if (currentlyInPhonebook) await removeFromPhonebook(peerId);
     else await addToPhonebook(peerId);
     await refreshPhonebook();
   }
@@ -767,7 +771,6 @@
 />
 
 <div
-  bind:this={rootEl}
   use:viewportHeight
   class="relative flex flex-col bg-background text-foreground font-mono overflow-hidden"
   role="main"
@@ -867,8 +870,8 @@
               ? "Remove from phonebook"
               : "Add to phonebook"}
             class={dmPeerInPhonebook
-              ? "text-red-500 hover:text-red-600 cursor-pointer"
-              : "text-green-500 hover:text-green-600 cursor-pointer"}
+              ? "text-red-400 hover:text-red-600"
+              : "text-green-400 hover:text-green-600"}
           >
             {#if dmPeerInPhonebook}
               <UserRoundMinus class="size-4" />
@@ -882,7 +885,7 @@
           size="icon"
           onclick={onLeave}
           aria-label="Leave room"
-          class="text-destructive hover:text-destructive/80 cursor-pointer"
+          class="text-red-400 hover:text-red-600"
         >
           <LogOut class="size-4" />
         </Button>
@@ -1270,8 +1273,6 @@
           bind:value={draft}
           onkeydown={handleKeydown}
           oninput={autoResize}
-          onfocus={() => (inputFocused = true)}
-          onblur={() => (inputFocused = false)}
           placeholder="Type a message…"
           rows={1}
           class="w-full resize-none rounded-md border border-input bg-background pl-3 pr-20 py-2 text-sm text-foreground placeholder:text-muted-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring min-h-10 max-h-30 overflow-y-auto"

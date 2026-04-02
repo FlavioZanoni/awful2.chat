@@ -9,7 +9,9 @@ declare let self: ServiceWorkerGlobalScope;
 clientsClaim();
 self.skipWaiting();
 
-precacheAndRoute((self as ServiceWorkerGlobalScope & { __WB_MANIFEST: any }).__WB_MANIFEST);
+precacheAndRoute(
+  (self as ServiceWorkerGlobalScope & { __WB_MANIFEST: any }).__WB_MANIFEST
+);
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;

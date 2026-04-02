@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { restore, identityStore } from "$lib/identity.svelte";
-  import { createIdentity } from "$lib/identity";
+  import { restore, identityStore } from "$lib/identity/identity.svelte";
+  import { createIdentity } from "$lib/identity/identity";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import {
@@ -13,8 +13,8 @@
   } from "$lib/components/ui/card";
   import AvatarPickerDialog from "$lib/components/AvatarPickerDialog.svelte";
   import { profileStore, loadProfile, saveName } from "$lib/profile.svelte";
-  import type { KeypairRecord } from "$lib/identity";
-  import { enroll } from "$lib/identity.svelte";
+  import type { KeypairRecord } from "$lib/identity/identity";
+  import { enroll } from "$lib/identity/identity.svelte";
   import { ArrowLeft, Smartphone } from "@lucide/svelte";
   import { setCookie } from "$lib/utils";
   import DeviceSyncDialog from "$lib/components/DeviceSyncDialog.svelte";

@@ -1,19 +1,24 @@
 <script lang="ts">
   import {
     transportState,
-    setTransmissionOutputVolume,
     selfId,
     peerIdToDid,
     isRelayed,
+  } from "$lib/transport/transport.svelte";
+  import {
+    setTransmissionOutputVolume,
+    stopWatchingTransmission,
     watchTransmission,
+  } from "$lib/transport/transmission.svelte";
+  import {
     joinCall,
+    leaveCall,
+    startScreenShare,
+    stopScreenShare,
     toggleCamera,
     toggleMute,
-    stopScreenShare,
-    startScreenShare,
-    leaveCall,
-    stopWatchingTransmission,
-  } from "$lib/transport.svelte";
+  } from "$lib/transport/call.svelte";
+
   import {
     Mic,
     MicOff,

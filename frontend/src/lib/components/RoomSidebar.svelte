@@ -1,6 +1,13 @@
 <script lang="ts">
   import type { Room } from "$lib/storage";
-  import { Hash, MessageSquare, Plus, Trash2, User } from "@lucide/svelte";
+  import {
+    Hash,
+    MessageSquare,
+    Plus,
+    Trash2,
+    User,
+    Users,
+  } from "@lucide/svelte";
   import SidebarControls from "./SidebarControls.svelte";
 
   interface DmPreview {
@@ -189,7 +196,7 @@
         aria-label="Open phonebook"
         title="Phonebook"
       >
-        <User class="size-4" />
+        <Users class="size-4" />
       </button>
     {/if}
   </div>
@@ -292,7 +299,7 @@
             type="button"
             onclick={() => onSelectDm(entry.peerId)}
             class="flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors cursor-pointer hover:bg-accent/50
-            {activeDmPeerId === entry.peerId
+        {activeDmPeerId === entry.peerId
               ? 'bg-accent text-accent-foreground'
               : 'text-muted-foreground'}"
           >

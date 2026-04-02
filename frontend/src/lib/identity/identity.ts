@@ -18,8 +18,8 @@ import {
   getMnemonicRecord,
   putIdentityRecord,
   getWebAuthnRecord,
-} from "./storage";
-import { utf8 } from "./utils";
+} from "../storage";
+import { utf8 } from "../utils";
 
 /** 2-byte multicodec prefix for ed25519 public keys in did:key. */
 const ED25519_MULTICODEC = new Uint8Array([0xed, 0x01]);

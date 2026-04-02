@@ -1,21 +1,5 @@
-import { MediasoupVideo } from "./transport/mediasoup";
-import type { VideoSource } from "./transport/types";
-import { identityStore } from "./identity.svelte";
-import {
-  playJoinSound,
-  playLeaveSound,
-  playMuteSound,
-  playUnmuteSound,
-  playDeafenSound,
-  playUndeafenSound,
-  playCameraOnSound,
-  playCameraOffSound,
-  playScreenShareStartSound,
-  playScreenShareStopSound,
-  playTransmissionJoinSound,
-  playTransmissionLeaveSound,
-  playTransmissionEndedSound,
-} from "./sounds";
+import { MediasoupVideo } from "./mediasoup";
+import { identityStore } from "../identity/identity.svelte";
 import {
   getOwnProfile,
   putMessage,
@@ -28,26 +12,15 @@ import {
   getPeerProfile,
   putPeerProfile,
   getAllPeerProfiles,
-  getAttachmentsWithData,
   putAttachment,
-  getAttachmentsByInfoHash,
   getAttachmentsByMessage,
-  updateAttachmentStatus,
   updateMessageStatus,
   getRoomParticipants,
   addRoomParticipant,
   removeRoomParticipant,
   updateParticipantLastSeen,
   cleanupInactiveParticipants,
-  getPhonebookEntries,
-  getDMRooms,
-  putPhonebookEntry,
-  deletePhonebookEntry,
-  putRoom,
-  getRoom,
-  deleteRoom,
-  type DMRoom,
-} from "./storage";
+} from "../storage";
 import {
   MessageType,
   wireToMessage,
@@ -61,22 +34,55 @@ import {
   type FileEntry,
   type FileMeta,
   type Attachment,
-} from "./types/message";
-import { refreshUnreadCount, refreshDmRooms, roomsStore } from "./rooms.svelte";
-import { WebTorrentFileTransport } from "./transport/file/webtorrent";
-import type {
-  FileSignalEnvelope,
-  FileDescriptor,
-  FileTransferSnapshot,
-} from "./transport/types";
-import { LibP2PTransport } from "./transport/libp2p/transport";
-import { LibP2PVoice } from "./transport/libp2p/voice";
-import { DtlnProcessor } from "./audio/dtln-processor";
-import { requireSession } from "./identity";
+} from "../types/message";
+import {
+  refreshUnreadCount,
+  refreshDmRooms,
+  roomsStore,
+} from "../rooms.svelte";
+import { WebTorrentFileTransport } from "./file/webtorrent";
+import type { FileDescriptor, FileTransferSnapshot } from "./types";
+import { LibP2PTransport } from "./libp2p/transport";
+import { LibP2PVoice } from "./libp2p/voice";
+import { DtlnProcessor } from "../audio/dtln-processor";
+import { requireSession } from "../identity/identity";
+import { encode, decode, normalizeAvatarUrl } from "../utils";
+import { _sendCallPresence, _sendCallState, leaveCall } from "./call.svelte";
+import {
+  encodeDmAckEnvelope,
+  ensureDmRoomForPeer,
+  flushQueuedDmForPeer,
+  joinPhonebookDmRooms,
+  parseDmEnvelope,
+  resolveDmDisplayName,
+  sendDirectMessage,
+} from "./dm.svelte";
+import {
+  _hydrateFileTransfersFromStorage,
+  _resumeAttachmentSeeding,
+  fileFingerprint,
+  initFiles,
+  isFileSignalWireMessage,
+  maybePeerIdFromSenderId,
+  shouldAutoDownload,
+  withFileTransfer,
+} from "./files.svelte";
+import { initVoice } from "./voice.svelte";
+import { initTransmission } from "./transmission.svelte";
 
 export type { Message };
 
 // ── State shapes ──────────────────────────────────────────────────────────────
+
+interface SendMessageOptions {
+  replyTo?: Message["replyTo"];
+  type?: ChatMessageType;
+  meta?: FileMeta;
+  attachments?: string[];
+  reactionTo?: string;
+  reactionEmoji?: string;
+  reactionOp?: "add" | "remove";
+}
 
 export interface ParticipantState {
   peerId: string;
@@ -155,246 +161,12 @@ export const transportState = $state<TransportState>({
 });
 
 let _lamport = 0;
-let _voiceOutputBeforeDeafen = 1;
-let _videoOutputBeforeDeafen = 1;
-let _mutedBeforeDeafen = false;
 let _connectPromise: Promise<void> | null = null;
 
 const BATCH_SIZE = 20;
-const MAX_PERSISTED_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-const DM_CHAT_TAG = 0x01;
-const DM_ACK_TAG = 0x02;
-const DM_QUEUE_KEY = "awful:dm-queue:v1";
-const _peerIdToDid = new Map<string, string>();
+export const MAX_PERSISTED_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+export const _peerIdToDid = new Map<string, string>();
 const _seededByFingerprint = new Map<string, FileDescriptor>();
-const _dmRoomCodeCache = new Map<string, string>();
-
-interface DmPayload {
-  id: string;
-  text: string;
-  ts: number;
-}
-
-interface QueuedMessage {
-  to: string;
-  data: number[];
-  queuedAt: number;
-}
-
-/**
- * Generate a stable, deterministic DM room code from two DIDs.
- * - Sort the two DIDs alphabetically
- * - Hash them to create a short (48 char max) stable identifier
- * - Prefix with "dm-" for easy identification
- */
-async function hashDmRoomCode(did1: string, did2: string): Promise<string> {
-  const sorted = [did1, did2].sort();
-  const input = sorted.join("|");
-  const cacheKey = input;
-  const cached = _dmRoomCodeCache.get(cacheKey);
-  if (cached) return cached;
-
-  const encoder = new TextEncoder();
-  const data = encoder.encode(input);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = new Uint8Array(hashBuffer);
-  // Take first 20 bytes (40 hex chars) + "dm-" prefix = 43 chars total
-  const hashHex = Array.from(hashArray.slice(0, 20))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  const roomCode = `dm-${hashHex}`;
-  _dmRoomCodeCache.set(cacheKey, roomCode);
-  return roomCode;
-}
-
-/**
- * Get the stable DM room code for a conversation with a peer.
- * Uses DIDs (stable identity) not peer IDs (ephemeral).
- */
-async function dmConversationCodeAsync(peerIdOrDid: string): Promise<string> {
-  const selfDid = identityStore.did ?? _transport.selfId();
-  // Resolve to DID if we have a mapping, otherwise use as-is
-  const peerDid = _peerIdToDid.get(peerIdOrDid) ?? peerIdOrDid;
-  return hashDmRoomCode(selfDid, peerDid);
-}
-
-function looksLikePeerId(value: string): boolean {
-  return value.startsWith("12D3") || value.startsWith("Qm");
-}
-
-function looksLikeDid(value: string): boolean {
-  return value.startsWith("did:");
-}
-
-function resolveDmPeerId(candidate: string): string | null {
-  if (!candidate) return null;
-  // If it's a current peer, use it
-  if (_transport.peers().includes(candidate)) return candidate;
-  // If it looks like a peer ID, use it
-  if (looksLikePeerId(candidate)) return candidate;
-  // If it's a DID, try to find the peer ID, but if not found, use the DID itself
-  // This is important because DIDs are stable identities
-  if (looksLikeDid(candidate)) {
-    for (const [peerId, did] of _peerIdToDid) {
-      if (did === candidate) return peerId;
-    }
-    // No mapping found, but it's a valid DID - return it as-is
-    // The room code will be computed from the DID which is stable
-    return candidate;
-  }
-  // Try reverse lookup for DID→peerId
-  for (const [peerId, did] of _peerIdToDid) {
-    if (did === candidate) return peerId;
-  }
-  return null;
-}
-
-/**
- * Resolve a peer identifier (peerId or DID) to its DID.
- * Returns the DID if found, otherwise returns the input as-is.
- */
-function resolveToDid(peerIdOrDid: string): string {
-  if (looksLikeDid(peerIdOrDid)) return peerIdOrDid;
-  return _peerIdToDid.get(peerIdOrDid) ?? peerIdOrDid;
-}
-
-function encodeDmChatEnvelope(payload: DmPayload): Uint8Array {
-  const body = new TextEncoder().encode(JSON.stringify(payload));
-  const out = new Uint8Array(1 + body.byteLength);
-  out[0] = DM_CHAT_TAG;
-  out.set(body, 1);
-  return out;
-}
-
-function encodeDmAckEnvelope(messageId: string): Uint8Array {
-  const body = new TextEncoder().encode(messageId);
-  const out = new Uint8Array(1 + body.byteLength);
-  out[0] = DM_ACK_TAG;
-  out.set(body, 1);
-  return out;
-}
-
-function parseDmEnvelope(
-  data: Uint8Array
-):
-  | { type: "chat"; payload: DmPayload }
-  | { type: "ack"; messageId: string }
-  | null {
-  if (data.byteLength < 1) return null;
-  const tag = data[0];
-  const payload = data.subarray(1);
-  try {
-    if (tag === DM_CHAT_TAG) {
-      const parsed = JSON.parse(new TextDecoder().decode(payload)) as DmPayload;
-      if (
-        typeof parsed?.id !== "string" ||
-        typeof parsed?.text !== "string" ||
-        typeof parsed?.ts !== "number"
-      ) {
-        return null;
-      }
-      return { type: "chat", payload: parsed };
-    }
-    if (tag === DM_ACK_TAG) {
-      return { type: "ack", messageId: new TextDecoder().decode(payload) };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function loadQueuedDmMessages(): QueuedMessage[] {
-  if (typeof localStorage === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(DM_QUEUE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (item) =>
-        item &&
-        typeof item.to === "string" &&
-        Array.isArray(item.data) &&
-        typeof item.queuedAt === "number"
-    ) as QueuedMessage[];
-  } catch {
-    return [];
-  }
-}
-
-function saveQueuedDmMessages(queue: QueuedMessage[]): void {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(DM_QUEUE_KEY, JSON.stringify(queue));
-}
-
-function queueDmMessage(toDid: string, data: Uint8Array): void {
-  const queue = loadQueuedDmMessages();
-  queue.push({ to: toDid, data: Array.from(data), queuedAt: Date.now() });
-  saveQueuedDmMessages(queue);
-}
-
-async function flushQueuedDmForPeer(peerId: string): Promise<void> {
-  const peerDid = _peerIdToDid.get(peerId);
-  if (!peerDid) return; // Can't flush if we don't know their DID yet
-
-  const queue = loadQueuedDmMessages();
-  const remaining: QueuedMessage[] = [];
-  for (const entry of queue) {
-    // Check if message is for this peer (by DID, not peerId)
-    if (entry.to !== peerDid) {
-      remaining.push(entry);
-      continue;
-    }
-    try {
-      await _transport.send(peerId, new Uint8Array(entry.data));
-    } catch {
-      remaining.push(entry);
-    }
-  }
-  saveQueuedDmMessages(remaining);
-}
-
-function resolveDmDisplayName(peerId: string): string {
-  const did = _peerIdToDid.get(peerId);
-  if (did)
-    return (
-      transportState.peerNames.get(did) ??
-      transportState.peerNames.get(peerId) ??
-      peerId.slice(0, 12)
-    );
-  return transportState.peerNames.get(peerId) ?? peerId.slice(0, 12);
-}
-
-async function joinPhonebookDmRooms(): Promise<void> {
-  const selfDid = identityStore.did ?? _transport.selfId();
-  if (!selfDid) return;
-  const entries = await getPhonebookEntries();
-  for (const entry of entries) {
-    const peerDid = resolveToDid(entry.peerId);
-    const roomCode = await hashDmRoomCode(selfDid, peerDid);
-    _transport.joinRoom(roomCode);
-  }
-}
-
-async function ensureDmRoomForPeer(peerIdOrDid: string): Promise<string> {
-  const peerDid = resolveToDid(peerIdOrDid);
-  const roomCode = await dmConversationCodeAsync(peerIdOrDid);
-  const existing = await getRoom(roomCode);
-  if (existing) return roomCode;
-  const room: DMRoom = {
-    roomCode,
-    type: "dm",
-    name: "",
-    lastSeenLamport: 0,
-    createdAt: Date.now(),
-    participants: [peerDid],
-    participantLastSeen: {},
-    participantDid: peerDid,
-  };
-  await putRoom(room);
-  return roomCode;
-}
 
 export const _dtln = new DtlnProcessor();
 _dtln.init().catch(console.error);
@@ -405,6 +177,12 @@ export const _fileTransport = new WebTorrentFileTransport(() =>
   _transport.selfId()
 );
 
+// Initialize submodules that depend on transport instances
+// Order matters: they receive instances from here
+initVoice(_voice, _dtln);
+initTransmission(_video);
+initFiles(_fileTransport);
+
 function lamportSend(): number {
   _lamport += 1;
   return _lamport;
@@ -412,77 +190,6 @@ function lamportSend(): number {
 
 function lamportReceive(remote: number): void {
   _lamport = Math.max(_lamport, remote) + 1;
-}
-
-function encode(obj: unknown): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(obj));
-}
-
-function decode(data: Uint8Array): unknown {
-  return JSON.parse(new TextDecoder().decode(data));
-}
-
-function normalizeAvatarUrl(url: unknown): string | undefined {
-  if (typeof url !== "string") return undefined;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
-      return undefined;
-    return parsed.toString();
-  } catch {
-    return undefined;
-  }
-}
-
-interface FileSignalWireMessage {
-  type: "__file_signal";
-  payload: FileSignalEnvelope;
-}
-
-function isFileSignalWireMessage(
-  value: unknown
-): value is FileSignalWireMessage {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { type?: unknown }).type === "__file_signal" &&
-    typeof (value as { payload?: unknown }).payload === "object" &&
-    (value as { payload?: unknown }).payload !== null
-  );
-}
-
-function maybePeerIdFromSenderId(senderId: string): string | null {
-  if (_transport.peers().includes(senderId)) return senderId;
-  for (const [peerId, did] of _peerIdToDid) {
-    if (did === senderId) return peerId;
-  }
-  return null;
-}
-
-function shouldAutoDownload(mimeType: string): boolean {
-  return mimeType.startsWith("image/") || mimeType.startsWith("video/");
-}
-
-async function fileFingerprint(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    await file.arrayBuffer()
-  );
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function withFileTransfer(snapshot: FileTransferSnapshot): void {
-  const prev = transportState.fileTransfers.get(snapshot.infoHash);
-  const nextSnapshot: FileTransferSnapshot = {
-    ...(prev ?? {}),
-    ...snapshot,
-    blobURL: snapshot.blobURL ?? prev?.blobURL,
-  } as FileTransferSnapshot;
-  const next = new Map(transportState.fileTransfers);
-  next.set(snapshot.infoHash, nextSnapshot);
-  transportState.fileTransfers = next;
 }
 
 if (typeof window !== "undefined") {
@@ -494,25 +201,6 @@ if (typeof window !== "undefined") {
 }
 
 // ── Senders ───────────────────────────────────────────────────────────────────
-
-function _sendCallPresence(peerId?: string): void {
-  const payload = encode({
-    type: MessageType.CallPresence,
-    inCall: transportState.inCall,
-  });
-  if (peerId) _transport.send(peerId, payload);
-  else _transport.broadcast(payload, transportState.roomCode!);
-}
-
-function _sendCallState(peerId?: string): void {
-  const payload = encode({
-    type: MessageType.CallState,
-    muted: transportState.muted,
-    deafened: transportState.deafened,
-  });
-  if (peerId) _transport.send(peerId, payload);
-  else _transport.broadcast(payload, transportState.roomCode!);
-}
 
 function _sendRoomName(peerId?: string): void {
   const name = transportState.roomName.trim().slice(0, 64);
@@ -579,7 +267,7 @@ async function _sendDigest(peerId: string): Promise<void> {
 
 // ── History ───────────────────────────────────────────────────────────────────
 
-async function _loadHistory(roomCode: string): Promise<void> {
+export async function _loadHistory(roomCode: string): Promise<void> {
   const [msgs, profiles] = await Promise.all([
     getMessages(roomCode),
     getAllPeerProfiles(),
@@ -919,142 +607,6 @@ function _handleChatMessage(
   }
 }
 
-async function _persistAttachmentStatusForInfoHash(
-  infoHash: string,
-  status: Attachment["status"]
-): Promise<void> {
-  const attachments = await getAttachmentsByInfoHash(infoHash);
-  await Promise.all(
-    attachments.map((attachment) =>
-      updateAttachmentStatus(attachment.id, status)
-    )
-  );
-}
-
-async function _persistDownloadedBlob(
-  infoHash: string,
-  blob: Blob
-): Promise<void> {
-  const attachments = await getAttachmentsByInfoHash(infoHash);
-  if (!attachments.length) return;
-
-  const shouldPersistData = attachments.some(
-    (attachment) => attachment.size <= MAX_PERSISTED_ATTACHMENT_BYTES
-  );
-  const data = shouldPersistData ? await blob.arrayBuffer() : undefined;
-
-  await Promise.all(
-    attachments.map((attachment) =>
-      putAttachment({
-        ...attachment,
-        data:
-          attachment.size <= MAX_PERSISTED_ATTACHMENT_BYTES
-            ? data
-            : attachment.data,
-        status: "complete",
-      })
-    )
-  );
-}
-
-async function _hydrateFileTransfersFromStorage(
-  roomCode: string
-): Promise<void> {
-  const seedable = await getAttachmentsWithData(roomCode);
-  for (const attachment of seedable) {
-    if (!attachment.data) continue;
-    const file: FileEntry = {
-      infoHash: attachment.infoHash,
-      filename: attachment.filename,
-      mimeType: attachment.mimeType,
-      size: attachment.size,
-    };
-    const blobURL = URL.createObjectURL(
-      new Blob([attachment.data], { type: attachment.mimeType })
-    );
-    withFileTransfer({
-      ...file,
-      status: attachment.status,
-      progress: 1,
-      done: true,
-      seeding: attachment.status === "seeding",
-      peers: 0,
-      seeders: attachment.status === "seeding" ? 1 : 0,
-      blobURL,
-    });
-  }
-}
-
-async function _resumeAttachmentSeeding(roomCode: string): Promise<void> {
-  const seedable = await getAttachmentsWithData(roomCode);
-  const dedup = new Map<string, Attachment>();
-  for (const attachment of seedable) {
-    if (!attachment.data) continue;
-    if (!dedup.has(attachment.infoHash))
-      dedup.set(attachment.infoHash, attachment);
-  }
-
-  const files = [...dedup.values()].map(
-    (attachment) =>
-      new File([attachment.data!], attachment.filename, {
-        type: attachment.mimeType,
-        lastModified: attachment.createdAt,
-      })
-  );
-  if (!files.length) return;
-
-  const seeded = await _fileTransport.seedFiles(files);
-  await Promise.all(
-    seeded.map((entry) =>
-      _persistAttachmentStatusForInfoHash(entry.infoHash, "seeding")
-    )
-  );
-}
-
-_fileTransport.on("signal", (peerId, envelope) => {
-  _transport.send(
-    peerId,
-    encode({
-      type: "__file_signal",
-      payload: envelope,
-    } satisfies FileSignalWireMessage)
-  );
-});
-
-_fileTransport.on("transfer", (snapshot) => {
-  withFileTransfer(snapshot);
-
-  if (
-    snapshot.status === "seeding" ||
-    snapshot.status === "complete" ||
-    snapshot.status === "failed"
-  ) {
-    _persistAttachmentStatusForInfoHash(
-      snapshot.infoHash,
-      snapshot.status
-    ).catch(() => {});
-  }
-});
-
-_fileTransport.on("downloaded", (infoHash, blob) => {
-  _persistDownloadedBlob(infoHash, blob).catch(() => {});
-
-  getAttachmentsByInfoHash(infoHash)
-    .then(async (attachments) => {
-      const existingTransfer = transportState.fileTransfers.get(infoHash);
-      if (existingTransfer?.seeding) return;
-      const attachment = attachments[0];
-      if (!attachment) return;
-      const file = new File([blob], attachment.filename, {
-        type: attachment.mimeType,
-        lastModified: Date.now(),
-      });
-      await _fileTransport.seedFiles([file]);
-      await _persistAttachmentStatusForInfoHash(infoHash, "seeding");
-    })
-    .catch(() => {});
-});
-
 // ── Transport events ──────────────────────────────────────────────────────────
 
 _transport.on("connect", (peerId) => {
@@ -1149,7 +701,7 @@ _transport.on("message", (peerId, data, room) => {
           await putMessage(msg);
           await refreshDmRooms();
           transportState.dmVersion += 1;
-          const activeDid = resolveToDid(transportState.activeDmPeerId ?? "");
+          const activeDid = peerIdToDid(transportState.activeDmPeerId ?? "");
           const isViewingThisDm =
             transportState.chatMode === "dm" &&
             (activeDid === senderDid || activeDid === peerId);
@@ -1243,152 +795,6 @@ _transport.on("message", (peerId, data, room) => {
   } catch (e) {
     console.warn("[app] message decode failed", e, data);
   }
-});
-
-// ── Voice events ──────────────────────────────────────────────────────────────
-
-_voice.on("trackAdded", (peerId, track) => {
-  const existing = transportState.participants.get(peerId) ?? {
-    peerId,
-    audioTrack: null,
-    videoTrack: null,
-    screenTrack: null,
-    screenAudioTrack: null,
-  };
-  transportState.participants = new Map(transportState.participants).set(
-    peerId,
-    {
-      ...existing,
-      audioTrack: track,
-    }
-  );
-});
-
-_voice.on("trackRemoved", (peerId) => {
-  const p = transportState.participants.get(peerId);
-  if (!p) return;
-  transportState.participants = new Map(transportState.participants).set(
-    peerId,
-    {
-      ...p,
-      audioTrack: null,
-    }
-  );
-});
-
-_voice.on("peerLeft", (peerId) => {
-  const p = transportState.participants.get(peerId);
-  if (!p) return;
-  transportState.participants = new Map(transportState.participants).set(
-    peerId,
-    {
-      ...p,
-      audioTrack: null,
-    }
-  );
-});
-
-_voice.on("error", (err) => {
-  transportState.error = err.message;
-});
-
-// ── Video events ──────────────────────────────────────────────────────────────
-
-_video.on("trackAdded", (peerId, track, source) => {
-  const existing = transportState.participants.get(peerId) ?? {
-    peerId,
-    audioTrack: null,
-    videoTrack: null,
-    screenTrack: null,
-    screenAudioTrack: null,
-  };
-  transportState.participants = new Map(transportState.participants).set(
-    peerId,
-    source === "camera"
-      ? { ...existing, videoTrack: track }
-      : track.kind === "audio"
-        ? { ...existing, screenAudioTrack: track }
-        : { ...existing, screenTrack: track }
-  );
-  if (!transportState.sfuPeerIds.has(peerId)) {
-    transportState.sfuPeerIds = new Set([...transportState.sfuPeerIds, peerId]);
-  }
-});
-
-_video.on("trackRemoved", (peerId, source) => {
-  const p = transportState.participants.get(peerId);
-  if (!p) return;
-  transportState.participants = new Map(transportState.participants).set(
-    peerId,
-    source === "camera"
-      ? { ...p, videoTrack: null }
-      : { ...p, screenTrack: null, screenAudioTrack: null }
-  );
-});
-
-_video.on("peerJoined", (peerId) => {
-  if (!transportState.sfuPeerIds.has(peerId)) {
-    transportState.sfuPeerIds = new Set([...transportState.sfuPeerIds, peerId]);
-  }
-});
-
-_video.on("peerLeft", (peerId) => {
-  const p = transportState.participants.get(peerId);
-  if (p) {
-    transportState.participants = new Map(transportState.participants).set(
-      peerId,
-      {
-        ...p,
-        videoTrack: null,
-        screenTrack: null,
-        screenAudioTrack: null,
-      }
-    );
-  }
-  const next = new Set(transportState.sfuPeerIds);
-  next.delete(peerId);
-  transportState.sfuPeerIds = next;
-
-  const tx = new Map(transportState.pendingTransmissions);
-  tx.delete(peerId);
-  transportState.pendingTransmissions = tx;
-
-  if (transportState.watchingTransmissionPeerId === peerId) {
-    transportState.watchingTransmissionPeerId = null;
-    transportState.watchingTransmissionProducerId = null;
-  }
-});
-
-_video.on("transmissionAvailable", (peerId, producerId) => {
-  transportState.pendingTransmissions = new Map(
-    transportState.pendingTransmissions
-  ).set(peerId, producerId);
-  if (!transportState.sfuPeerIds.has(peerId)) {
-    transportState.sfuPeerIds = new Set([...transportState.sfuPeerIds, peerId]);
-  }
-});
-
-_video.on("transmissionEnded", (peerId) => {
-  const next = new Map(transportState.pendingTransmissions);
-  next.delete(peerId);
-  transportState.pendingTransmissions = next;
-  if (transportState.watchingTransmissionPeerId === peerId) {
-    transportState.watchingTransmissionPeerId = null;
-    transportState.watchingTransmissionProducerId = null;
-    playTransmissionEndedSound();
-  }
-});
-
-_video.on("transmissionWatched", () => {
-  playTransmissionJoinSound();
-});
-
-_video.on("transmissionWatchEnded", () => {
-  playTransmissionLeaveSound();
-});
-
-_video.on("error", (err) => {
-  transportState.error = err.message;
 });
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -1509,16 +915,6 @@ function _disconnectWithoutBroadcasting(): void {
   transportState.callPeerStates = new Map();
   transportState.chatMode = "room";
   transportState.activeDmPeerId = null;
-}
-
-interface SendMessageOptions {
-  replyTo?: Message["replyTo"];
-  type?: ChatMessageType;
-  meta?: FileMeta;
-  attachments?: string[];
-  reactionTo?: string;
-  reactionEmoji?: string;
-  reactionOp?: "add" | "remove";
 }
 
 export async function sendMessage(
@@ -1755,16 +1151,8 @@ export function selfId(): string {
   return identityStore.did ?? _transport.selfId();
 }
 
-export function directPeerId(): string {
-  return _transport.selfId();
-}
-
 export function peerId(): string {
   return _transport.selfId();
-}
-
-export function isRelayed(peerId: string): boolean {
-  return _transport.isRelayed(peerId);
 }
 
 export function peerIdToDid(peerId: string): string {
@@ -1778,431 +1166,6 @@ export function didToPeerId(did: string): string | null {
   return null;
 }
 
-export function isDmConversation(): boolean {
-  return transportState.chatMode === "dm";
-}
-
-export async function dmConversationCodeFor(
-  peerIdOrDid: string
-): Promise<string> {
-  const resolvedPeerId = resolveDmPeerId(peerIdOrDid) ?? peerIdOrDid;
-  return dmConversationCodeAsync(resolvedPeerId);
-}
-
-export async function openDmConversation(peerIdOrDid: string): Promise<void> {
-  if (!_transport.selfId()) return;
-  // Use the input as-is if we can't resolve to a peer ID
-  // This supports opening DMs with DIDs directly
-  const resolvedPeerId = resolveDmPeerId(peerIdOrDid) ?? peerIdOrDid;
-  if (!resolvedPeerId) return;
-  const roomCode = await ensureDmRoomForPeer(resolvedPeerId);
-  _transport.joinRoom(roomCode);
-  await _loadHistory(roomCode);
-  transportState.chatMode = "dm";
-  transportState.activeDmPeerId = resolvedPeerId;
-  transportState.roomCode = roomCode;
-  transportState.roomName = resolveDmDisplayName(resolvedPeerId);
-  transportState.connected = true;
-}
-
-export async function sendDirectMessage(text: string): Promise<void> {
-  const peerId = transportState.activeDmPeerId;
-  if (!peerId) return;
-  const body = text.trim();
-  if (!body) return;
-
-  const roomCode = await ensureDmRoomForPeer(peerId);
-  _transport.joinRoom(roomCode);
-
-  const id = crypto.randomUUID();
-  const ts = Date.now();
-  const envelope = encodeDmChatEnvelope({ id, text: body, ts });
-
-  const peerDid = _peerIdToDid.get(peerId) ?? peerId;
-
-  // Resolve to an actual peer ID (not a DID) before checking online status.
-  // resolveDmPeerId already handles peerId→peerId and DID→peerId via _peerIdToDid,
-  // but falls back to the DID itself when no mapping exists. We need a real peer ID
-  // to check _transport.peers(), so we try didToPeerId as a second pass.
-  let resolvedPeerId = resolveDmPeerId(peerId);
-  if (resolvedPeerId && looksLikeDid(resolvedPeerId)) {
-    resolvedPeerId = didToPeerId(resolvedPeerId) ?? resolvedPeerId;
-  }
-
-  const isOnline =
-    !!resolvedPeerId &&
-    !looksLikeDid(resolvedPeerId) &&
-    _transport.peers().includes(resolvedPeerId);
-
-  if (!isOnline) {
-    queueDmMessage(peerDid, envelope);
-  } else {
-    try {
-      await _transport.send(resolvedPeerId!, envelope);
-    } catch {
-      queueDmMessage(peerDid, envelope);
-    }
-  }
-
-  const mySenderId = identityStore.did ?? _transport.selfId();
-  const msg: Message = {
-    id,
-    roomCode,
-    senderId: mySenderId,
-    senderName: "You",
-    timestamp: ts,
-    lamport: ts,
-    type: MessageType.Text,
-    content: body,
-    attachments: [],
-    status: "sent",
-  };
-
-  await putMessage(msg);
-  await refreshDmRooms();
-  transportState.dmVersion += 1;
-  if (
-    transportState.chatMode === "dm" &&
-    transportState.activeDmPeerId === peerId
-  ) {
-    transportState.messages = [...transportState.messages, msg].sort(
-      (a, b) => a.timestamp - b.timestamp
-    );
-  }
-}
-
-export async function addToPhonebook(peerIdOrDid: string): Promise<void> {
-  const resolvedPeerId = resolveDmPeerId(peerIdOrDid);
-  if (!resolvedPeerId) return;
-  const roomCode = await ensureDmRoomForPeer(resolvedPeerId);
-  const did = _peerIdToDid.get(resolvedPeerId);
-  const profile = did ? await getPeerProfile(did) : undefined;
-  await putPhonebookEntry({
-    peerId: resolvedPeerId,
-    nickname: profile?.nickname || resolveDmDisplayName(resolvedPeerId),
-    addedAt: Date.now(),
-  });
-  _transport.joinRoom(roomCode);
-}
-
-export async function removeFromPhonebook(peerIdOrDid: string): Promise<void> {
-  const resolvedPeerId = resolveDmPeerId(peerIdOrDid) ?? peerIdOrDid;
-  await deletePhonebookEntry(resolvedPeerId);
-  const roomCode = await dmConversationCodeAsync(resolvedPeerId);
-  _transport.leaveRoom(roomCode);
-}
-
-export async function removeDmConversation(peerIdOrDid: string): Promise<void> {
-  const resolvedPeerId = resolveDmPeerId(peerIdOrDid) ?? peerIdOrDid;
-  const allDmRooms = await getDMRooms();
-
-  // Get the canonical room code for this peer
-  const canonicalRoomCode = await dmConversationCodeAsync(resolvedPeerId);
-  const candidates = new Set<string>([canonicalRoomCode]);
-
-  // Also check rooms by participantDid match
-  for (const room of allDmRooms) {
-    if (
-      room.participantDid === resolvedPeerId ||
-      room.participantDid === peerIdOrDid
-    ) {
-      candidates.add(room.roomCode);
-    }
-  }
-
-  const queue = loadQueuedDmMessages();
-  saveQueuedDmMessages(queue.filter((q) => q.to !== resolvedPeerId));
-  await Promise.all(
-    [...candidates].map(async (roomCode) => {
-      await deleteRoom(roomCode);
-    })
-  );
-
-  if (
-    transportState.chatMode === "dm" &&
-    transportState.activeDmPeerId === resolvedPeerId
-  ) {
-    transportState.activeDmPeerId = null;
-    transportState.roomCode = null;
-    transportState.roomName = "";
-    transportState.messages = [];
-    transportState.chatMode = "room";
-    transportState.connected = false;
-  }
-
-  transportState.dmVersion += 1;
-}
-
-// ── Call ──────────────────────────────────────────────────────────────────────
-
-export async function joinCall(): Promise<void> {
-  transportState.error = null;
-  try {
-    await _voice.join(transportState.roomCode ?? "");
-    await _video.join(transportState.roomCode ?? "", _transport.selfId());
-    transportState.inCall = true;
-    playJoinSound();
-    _sendCallPresence();
-    transportState.muted = _voice.isMuted();
-    _sendCallState();
-    transportState.localMicStream = _voice.getMicStream();
-  } catch (err) {
-    _voice.leave();
-    _video.leave();
-    transportState.inCall = false;
-    transportState.muted = false;
-    transportState.localCameraStream = null;
-    transportState.localScreenStream = null;
-    transportState.localMicStream = null;
-    transportState.cameraOff = true;
-    transportState.screenSharing = false;
-    transportState.error = err instanceof Error ? err.message : String(err);
-    throw err;
-  }
-}
-
-export function leaveCall(): void {
-  if (transportState.inCall) {
-    playLeaveSound();
-    transportState.inCall = false;
-    _sendCallPresence();
-  }
-  stopCamera();
-  stopScreenShare();
-  _voice.leave();
-  _video.leave();
-  transportState.inCall = false;
-  transportState.muted = false;
-  transportState.deafened = false;
-  transportState.participants = new Map();
-  transportState.localCameraStream = null;
-  transportState.localScreenStream = null;
-  transportState.localMicStream = null;
-  transportState.cameraOff = true;
-  transportState.screenSharing = false;
-  transportState.sfuPeerIds = new Set();
-  transportState.pendingTransmissions = new Map();
-  transportState.watchingTransmissionPeerId = null;
-  transportState.watchingTransmissionProducerId = null;
-}
-
-export function toggleMute(): void {
-  if (_voice.isMuted()) {
-    _voice.unmute();
-    playUnmuteSound();
-  } else {
-    _voice.mute();
-    playMuteSound();
-  }
-  transportState.muted = _voice.isMuted();
-  _sendCallState();
-}
-
-export async function startCamera(): Promise<void> {
-  transportState.error = null;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 },
-      },
-      audio: false,
-    });
-    transportState.localCameraStream = stream;
-    transportState.cameraOff = false;
-    playCameraOnSound();
-    await _video.startCamera(stream);
-  } catch (err) {
-    transportState.error = err instanceof Error ? err.message : String(err);
-    throw err;
-  }
-}
-
-export function stopCamera(): void {
-  transportState.localCameraStream?.getTracks().forEach((t) => t.stop());
-  transportState.localCameraStream = null;
-  transportState.cameraOff = true;
-  playCameraOffSound();
-  _video.stopCamera();
-}
-
-export async function toggleCamera(): Promise<void> {
-  if (transportState.cameraOff) await startCamera();
-  else stopCamera();
-}
-
-export async function startScreenShare(): Promise<void> {
-  transportState.error = null;
-  try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { ideal: 15 } },
-      audio: true,
-    });
-    transportState.localScreenStream = stream;
-    transportState.screenSharing = true;
-    playScreenShareStartSound();
-    stream.getVideoTracks()[0].onended = () => stopScreenShare();
-    await _video.startScreenShare(stream);
-  } catch (err) {
-    transportState.error = err instanceof Error ? err.message : String(err);
-    throw err;
-  }
-}
-
-export function stopScreenShare(): void {
-  transportState.localScreenStream?.getTracks().forEach((t) => t.stop());
-  transportState.localScreenStream = null;
-  transportState.screenSharing = false;
-  playScreenShareStopSound();
-  _video.stopScreenShare();
-}
-
-export function pauseVideo(source: VideoSource): void {
-  _video.pauseVideo(source);
-}
-export function resumeVideo(source: VideoSource): void {
-  _video.resumeVideo(source);
-}
-
-export async function watchTransmission(
-  peerId: string,
-  producerId: string
-): Promise<void> {
-  transportState.error = null;
-  try {
-    await _video.watchTransmission(peerId, producerId);
-    transportState.watchingTransmissionPeerId = peerId;
-    transportState.watchingTransmissionProducerId = producerId;
-    const next = new Map(transportState.pendingTransmissions);
-    next.delete(peerId);
-    transportState.pendingTransmissions = next;
-  } catch (err) {
-    transportState.error = err instanceof Error ? err.message : String(err);
-    throw err;
-  }
-}
-
-export function stopWatchingTransmission(): void {
-  const peerId = transportState.watchingTransmissionPeerId;
-  const producerId = transportState.watchingTransmissionProducerId;
-  if (!peerId || !producerId) return;
-  _video.stopWatchingTransmission(peerId);
-  transportState.pendingTransmissions = new Map(
-    transportState.pendingTransmissions
-  ).set(peerId, producerId);
-  transportState.watchingTransmissionPeerId = null;
-  transportState.watchingTransmissionProducerId = null;
-}
-
-// ── Voice device / gain controls ──────────────────────────────────────────────
-
-export async function setVoiceInputDevice(deviceId: string): Promise<void> {
-  await _voice.setInputDevice(deviceId);
-  transportState.localMicStream = _voice.getMicStream();
-}
-
-export function getVoiceInputDevices(): Promise<MediaDeviceInfo[]> {
-  return _voice.getInputDevices();
-}
-
-export function getVoiceActiveInputDevice(): string | null {
-  return _voice.getActiveInputDevice();
-}
-
-export function setVoiceInputGain(gain: number): void {
-  _voice.setInputGain(gain);
-}
-export function getVoiceInputGain(): number {
-  return _voice.getInputGain();
-}
-
-export async function setVoiceOutputDevice(deviceId: string): Promise<void> {
-  await _voice.setOutputDevice(deviceId);
-}
-
-export function getVoiceOutputDevices(): Promise<MediaDeviceInfo[]> {
-  return _voice.getOutputDevices();
-}
-
-export function getVoiceActiveOutputDevice(): string | null {
-  return _voice.getActiveOutputDevice();
-}
-
-export function setVoiceOutputVolume(volume: number): void {
-  const next = Math.max(0, volume);
-  _voiceOutputBeforeDeafen = next;
-  if (!transportState.deafened) _voice.setOutputVolume(next);
-}
-
-export function getVoiceOutputVolume(): number {
-  return _voice.getOutputVolume();
-}
-
-export function setVoiceDtlnNoiseGate(threshold: number): void {
-  _dtln.setNoiseGate(threshold);
-}
-
-export function setVoiceDtlnEnabled(enabled: boolean): void {
-  _voice.setDtlnEnabled(enabled);
-}
-
-export function getVoiceDtlnEnabled(): boolean {
-  return _voice.isDtlnEnabled();
-}
-
-export function setTransmissionOutputVolume(volume: number): void {
-  const next = Math.max(0, Math.min(1, volume));
-  _videoOutputBeforeDeafen = next;
-  transportState.transmissionOutputVolume = next;
-  _applyTransmissionVolume(next);
-}
-
-function _applyTransmissionVolume(volume: number): void {
-  document
-    .querySelectorAll<HTMLAudioElement>("audio[data-remote]")
-    .forEach((el) => {
-      el.volume = volume;
-    });
-}
-
-export function getTransmissionOutputVolume(): number {
-  return _videoOutputBeforeDeafen;
-}
-
-export function setDeafened(deafened: boolean): void {
-  if (deafened) {
-    // Save current states before deafening
-    _voiceOutputBeforeDeafen = _voice.getOutputVolume();
-    _videoOutputBeforeDeafen = transportState.transmissionOutputVolume;
-    _mutedBeforeDeafen = transportState.muted;
-    // Deafen (mute output)
-    _voice.setOutputVolume(0);
-    transportState.transmissionOutputVolume = 0;
-    _applyTransmissionVolume(0);
-    // Also mute input if not already muted
-    if (!_voice.isMuted()) {
-      _voice.mute();
-      transportState.muted = true;
-    }
-    transportState.deafened = true;
-    playDeafenSound();
-  } else {
-    // Undeafen (restore output)
-    _voice.setOutputVolume(_voiceOutputBeforeDeafen);
-    transportState.transmissionOutputVolume = _videoOutputBeforeDeafen;
-    _applyTransmissionVolume(_videoOutputBeforeDeafen);
-    // Restore mute state: unmute only if we weren't muted before deafening
-    if (!_mutedBeforeDeafen && _voice.isMuted()) {
-      _voice.unmute();
-      transportState.muted = false;
-    }
-    transportState.deafened = false;
-    playUndeafenSound();
-  }
-  _sendCallState();
-}
-
-export function toggleDeafen(): void {
-  setDeafened(!transportState.deafened);
+export function isRelayed(peerId: string): boolean {
+  return _transport.isRelayed(peerId);
 }

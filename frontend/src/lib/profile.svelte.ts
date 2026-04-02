@@ -1,11 +1,11 @@
-import { identityStore } from "$lib/identity.svelte";
+import { identityStore } from "$lib/identity/identity.svelte";
 import {
   getOwnProfile,
   putOwnProfile,
   updateOwnProfile,
   pfpBlobURL,
 } from "$lib/storage";
-import { broadcastProfile } from "$lib/transport.svelte";
+import { broadcastProfile } from "$lib/transport/transport.svelte";
 
 interface ProfileStore {
   nickname: string;

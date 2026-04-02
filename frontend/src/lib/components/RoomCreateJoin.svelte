@@ -11,7 +11,7 @@
   } from "$lib/components/ui/card";
   import { profileStore, loadProfile, saveName } from "$lib/profile.svelte";
   import AvatarPickerDialog from "$lib/components/AvatarPickerDialog.svelte";
-  import { transportState } from "$lib/transport.svelte";
+  import { transportState } from "$lib/transport/transport.svelte";
 
   interface Props {
     onJoin: (roomCode: string, displayName: string, roomName?: string) => void;
@@ -121,7 +121,7 @@
               class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-amber-300/10 text-xs"
             >
               <span class="size-2 rounded-full bg-amber-300"></span>
-              <span class="text-destructive">Connecting...</span>
+              <span> Connecting...</span>
             </div>
           {/if}
         </div>

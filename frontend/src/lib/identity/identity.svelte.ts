@@ -27,7 +27,7 @@ import {
   unlockWithWebAuthn,
   getWebAuthnCapabilities,
 } from "./identity";
-import { deleteWebAuthnRecord } from "./storage";
+import { deleteWebAuthnRecord } from "../storage";
 
 interface IdentityStore {
   /** True when the private key is held in memory and signing is available. */

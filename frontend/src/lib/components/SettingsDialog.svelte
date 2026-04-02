@@ -13,7 +13,7 @@
   } from "$lib/components/ui/drawer";
   import { viewportHeight } from "$lib/actions/viewport-height";
   import { Button } from "$lib/components/ui/button";
-  import { lock } from "$lib/identity.svelte";
+  import { lock } from "$lib/identity/identity.svelte";
   import { LogOut, User, Volume2, RefreshCw, ChartPie } from "@lucide/svelte";
 
   import ProfileSettings from "./settings/ProfileSettings.svelte";

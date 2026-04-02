@@ -10,25 +10,23 @@
     SelectTrigger,
   } from "$lib/components/ui/select";
   import { Button } from "$lib/components/ui/button";
+  import { transportState, _dtln } from "$lib/transport/transport.svelte";
   import {
-    setVoiceInputDevice,
-    getVoiceInputDevices,
     getVoiceActiveInputDevice,
-    setVoiceInputGain,
-    getVoiceInputGain,
-    setVoiceOutputDevice,
-    getVoiceOutputDevices,
     getVoiceActiveOutputDevice,
-    setVoiceOutputVolume,
+    getVoiceInputDevices,
+    getVoiceOutputDevices,
+    setVoiceInputDevice,
+    setVoiceOutputDevice,
+    getVoiceInputGain,
+    setVoiceInputGain,
     getVoiceOutputVolume,
-    setVoiceDtlnNoiseGate,
-    setVoiceDtlnEnabled,
+    setVoiceOutputVolume,
     getVoiceDtlnEnabled,
-    transportState,
-    setDeafened,
-    _dtln,
-    toggleMute,
-  } from "$lib/transport.svelte";
+    setVoiceDtlnEnabled,
+    setVoiceDtlnNoiseGate,
+  } from "$lib/transport/voice.svelte";
+  import { setDeafened, toggleMute } from "$lib/transport/call.svelte";
 
   const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
     echoCancellation: false,

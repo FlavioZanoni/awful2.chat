@@ -1,6 +1,6 @@
 <script lang="ts">
   import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
-  import { identityStore } from "$lib/identity.svelte";
+  import { identityStore } from "$lib/identity/identity.svelte";
   import IdentitySetup from "$lib/components/IdentitySetup.svelte";
   import UnlockIdentity from "$lib/components/UnlockIdentity.svelte";
   import RoomCreateJoin from "$lib/components/RoomCreateJoin.svelte";
@@ -13,13 +13,8 @@
     selfId,
     setRoomName,
     connect,
-    openDmConversation,
-    dmConversationCodeFor,
-    removeDmConversation,
-    addToPhonebook,
-    removeFromPhonebook,
     peerIdToDid,
-  } from "$lib/transport.svelte";
+  } from "$lib/transport/transport.svelte";
   import {
     roomsStore,
     loadRooms,
@@ -40,13 +35,20 @@
   import ReloadPrompt from "./ReloadPrompt.svelte";
   import InstallPrompt from "./InstallPrompt.svelte";
   import { Dialog } from "bits-ui";
-  import { Star, StarOff, Trash2, Users, X } from "@lucide/svelte";
+  import { Notebook, Star, Trash2, Users, X } from "@lucide/svelte";
   import {
     Drawer,
     DrawerContent,
     DrawerHeader,
     DrawerTitle,
   } from "$lib/components/ui/drawer";
+  import {
+    addToPhonebook,
+    dmConversationCodeFor,
+    openDmConversation,
+    removeDmConversation,
+    removeFromPhonebook,
+  } from "$lib/transport/dm.svelte";
 
   const queryClient = new QueryClient();
 
@@ -426,9 +428,10 @@
   const sortedPhonebook = $derived.by(() => {
     return [...roomsStore.phonebook]
       .map((entry) => {
-        const did = peerIdToDid(entry.peerId);
+        const did = entry.did || peerIdToDid(entry.peerId);
         return {
           ...entry,
+          did,
           nickname:
             transportState.peerNames.get(did) ||
             transportState.peerNames.get(entry.peerId) ||
@@ -699,26 +702,44 @@
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+    </div>
+  {/if}
 
-      {#if isMobile}
-        <Drawer
-          open={phonebookOpen}
-          onOpenChange={(v) => (phonebookOpen = v)}
-          direction="bottom"
-        >
-          <DrawerContent
-            class="bg-card text-card-foreground overflow-hidden h-2/3"
-          >
-            <DrawerHeader class="px-4 py-3 border-b border-border shrink-0">
-              <DrawerTitle class="m-auto font-semibold flex items-center gap-2">
-                <Users class="size-4 text-muted-foreground" />
-                Phonebook
-              </DrawerTitle>
-            </DrawerHeader>
-            <div class="p-3 overflow-y-auto space-y-2">
-              {#each sortedPhonebook as entry (entry.peerId)}
+  {#if isMobile}
+    <Drawer
+      open={phonebookOpen}
+      onOpenChange={(v) => (phonebookOpen = v)}
+      direction="bottom"
+    >
+      <DrawerContent class="bg-card text-card-foreground overflow-hidden h-2/3">
+        <DrawerHeader class="px-4 py-3 border-b border-border shrink-0">
+          <DrawerTitle class="m-auto font-semibold flex items-center gap-2">
+            <Users class="size-4 text-muted-foreground" />
+            Phonebook
+          </DrawerTitle>
+        </DrawerHeader>
+        <div class="p-3 overflow-y-auto space-y-2 min-h-50">
+          {#if sortedPhonebook.length === 0}
+            <div
+              class="flex flex-col items-center justify-center h-40 text-muted-foreground"
+            >
+              <Notebook class="size-12 mb-2 opacity-50" />
+              <p class="text-sm">No saved contacts found in your phonebook</p>
+            </div>
+          {:else}
+            <!-- Starred Contacts -->
+            {@const starred = sortedPhonebook.filter((e) => e.favorite)}
+            {@const regular = sortedPhonebook.filter((e) => !e.favorite)}
+
+            {#if starred.length > 0}
+              <div
+                class="px-2 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wide"
+              >
+                Starred
+              </div>
+              {#each starred as entry (entry.peerId)}
                 <div
-                  class="flex items-center gap-2 rounded-md border border-border p-2"
+                  class="flex items-center gap-2 rounded-md border border-border p-2 group"
                 >
                   <div
                     class="size-8 rounded-full overflow-hidden bg-secondary text-secondary-foreground text-xs font-semibold flex items-center justify-center shrink-0"
@@ -737,7 +758,8 @@
                     class="min-w-0 flex-1 text-left"
                     onclick={() => {
                       phonebookOpen = false;
-                      handleSelectDm(entry.peerId);
+                      const contactId = entry.did || entry.peerId;
+                      handleSelectDm(contactId);
                     }}
                   >
                     <div class="truncate text-sm font-medium">
@@ -748,48 +770,118 @@
                     </div>
                   </button>
                   <button
-                    class="size-8 inline-flex items-center justify-center"
+                    class="size-8 inline-flex items-center justify-center rounded hover:bg-accent"
                     onclick={() => toggleFavorite(entry.peerId)}
+                    title="Remove from favorites"
                   >
-                    {#if entry.favorite}
-                      <Star class="size-4 text-yellow-500" />
-                    {:else}
-                      <StarOff class="size-4 text-muted-foreground" />
-                    {/if}
+                    <Star class="size-4 text-yellow-500 fill-yellow-500" />
                   </button>
                   <button
-                    class="size-8 inline-flex items-center justify-center"
+                    class="size-8 inline-flex items-center justify-center rounded hover:bg-accent"
                     onclick={() => removePhonebookContact(entry.peerId)}
                   >
                     <Trash2 class="size-4 text-destructive" />
                   </button>
                 </div>
               {/each}
-            </div>
-          </DrawerContent>
-        </Drawer>
-      {:else}
-        <Dialog.Root
-          open={phonebookOpen}
-          onOpenChange={(v) => (phonebookOpen = v)}
-        >
-          <Dialog.Portal>
-            <Dialog.Overlay
-              class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
-            />
-            <Dialog.Content
-              class="fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-4 shadow-lg"
-            >
-              <Dialog.Title
-                class="text-lg font-semibold flex items-center gap-2"
-              >
-                <Users class="size-4" />
-                Phonebook
-              </Dialog.Title>
-              <div class="mt-4 max-h-96 overflow-y-auto space-y-2">
-                {#each sortedPhonebook as entry (entry.peerId)}
+            {/if}
+
+            <!-- Regular Contacts -->
+            {#if regular.length > 0}
+              {#if starred.length > 0}
+                <div
+                  class="px-2 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wide mt-4"
+                >
+                  Contacts
+                </div>
+              {/if}
+              {#each regular as entry (entry.peerId)}
+                <div
+                  class="flex items-center gap-2 rounded-md border border-border p-2 group"
+                >
                   <div
-                    class="flex items-center gap-2 rounded-md border border-border p-2"
+                    class="size-8 rounded-full overflow-hidden bg-secondary text-secondary-foreground text-xs font-semibold flex items-center justify-center shrink-0"
+                  >
+                    {#if entry.avatarUrl}
+                      <img
+                        src={entry.avatarUrl}
+                        alt={entry.nickname}
+                        class="size-full object-cover"
+                      />
+                    {:else}
+                      {entry.nickname.charAt(0).toUpperCase()}
+                    {/if}
+                  </div>
+                  <button
+                    class="min-w-0 flex-1 text-left"
+                    onclick={() => {
+                      phonebookOpen = false;
+                      const contactId = entry.did || entry.peerId;
+                      handleSelectDm(contactId);
+                    }}
+                  >
+                    <div class="truncate text-sm font-medium">
+                      {entry.nickname}
+                    </div>
+                    <div class="truncate text-xs text-muted-foreground">
+                      {entry.peerId.slice(0, 16)}
+                    </div>
+                  </button>
+                  <button
+                    class="size-8 inline-flex items-center justify-center rounded hover:bg-accent opacity-0 group-hover:opacity-100 transition-opacity"
+                    onclick={() => toggleFavorite(entry.peerId)}
+                    title="Add to favorites"
+                  >
+                    <Star class="size-4 text-gray-400" />
+                  </button>
+                  <button
+                    class="size-8 inline-flex items-center justify-center rounded hover:bg-accent"
+                    onclick={() => removePhonebookContact(entry.peerId)}
+                  >
+                    <Trash2 class="size-4 text-destructive" />
+                  </button>
+                </div>
+              {/each}
+            {/if}
+          {/if}
+        </div>
+      </DrawerContent>
+    </Drawer>
+  {:else}
+    <Dialog.Root open={phonebookOpen} onOpenChange={(v) => (phonebookOpen = v)}>
+      <Dialog.Portal>
+        <Dialog.Overlay
+          class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+        />
+        <Dialog.Content
+          class="fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-4 shadow-lg min-h-75"
+        >
+          <Dialog.Title class="text-lg font-semibold flex items-center gap-2">
+            <Users class="size-4" />
+            Phonebook
+          </Dialog.Title>
+          <div class="mt-4 max-h-96 overflow-y-auto space-y-2 min-h-50">
+            {#if sortedPhonebook.length === 0}
+              <div
+                class="flex flex-col items-center justify-center h-40 text-muted-foreground"
+              >
+                <Notebook class="size-12 mb-2 opacity-50" />
+                <p class="text-sm">No saved contacts found in your phonebook</p>
+              </div>
+            {:else}
+              <!-- Starred Contacts -->
+              {@const starred = sortedPhonebook.filter((e) => e.favorite)}
+              {@const regular = sortedPhonebook.filter((e) => !e.favorite)}
+
+              {#if starred.length > 0}
+                <div
+                  class="px-2 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wide"
+                >
+                  Starred
+                </div>
+                {#each starred as entry (entry.peerId)}
+                  <div
+                    class="flex items-center gap-2 rounded-md border border-border p-2 group"
                   >
                     <div
                       class="size-8 rounded-full overflow-hidden bg-secondary text-secondary-foreground text-xs font-semibold flex items-center justify-center shrink-0"
@@ -808,7 +900,8 @@
                       class="min-w-0 flex-1 text-left"
                       onclick={() => {
                         phonebookOpen = false;
-                        handleSelectDm(entry.peerId);
+                        const contactId = entry.did || entry.peerId;
+                        handleSelectDm(contactId);
                       }}
                     >
                       <div class="truncate text-sm font-medium">
@@ -819,33 +912,93 @@
                       </div>
                     </button>
                     <button
-                      class="size-8 inline-flex items-center justify-center"
+                      class="size-8 inline-flex items-center justify-center rounded hover:bg-accent cursor-pointer"
                       onclick={() => toggleFavorite(entry.peerId)}
+                      title="Remove from favorites"
                     >
-                      {#if entry.favorite}
-                        <Star class="size-4 text-yellow-500" />
-                      {:else}
-                        <StarOff class="size-4 text-muted-foreground" />
-                      {/if}
+                      <Star
+                        class="size-4 text-yellow-500 fill-yellow-500 group-hover:hidden"
+                      />
+                      <Star
+                        class="size-4 text-gray-400 hidden group-hover:block"
+                      />
                     </button>
                     <button
-                      class="size-8 inline-flex items-center justify-center"
+                      class="size-8 inline-flex items-center justify-center rounded hover:bg-accent cursor-pointer"
                       onclick={() => removePhonebookContact(entry.peerId)}
                     >
                       <Trash2 class="size-4 text-destructive" />
                     </button>
                   </div>
                 {/each}
-              </div>
-              <Dialog.Close
-                class="absolute right-4 top-4 rounded-sm opacity-70 hover:opacity-100"
-              >
-                <X class="size-4" />
-              </Dialog.Close>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
-      {/if}
-    </div>
+              {/if}
+
+              <!-- Regular Contacts -->
+              {#if regular.length > 0}
+                {#if starred.length > 0}
+                  <div
+                    class="px-2 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wide mt-4"
+                  >
+                    Contacts
+                  </div>
+                {/if}
+                {#each regular as entry (entry.peerId)}
+                  <div
+                    class="flex items-center gap-2 rounded-md border border-border p-2 group"
+                  >
+                    <div
+                      class="size-8 rounded-full overflow-hidden bg-secondary text-secondary-foreground text-xs font-semibold flex items-center justify-center shrink-0"
+                    >
+                      {#if entry.avatarUrl}
+                        <img
+                          src={entry.avatarUrl}
+                          alt={entry.nickname}
+                          class="size-full object-cover"
+                        />
+                      {:else}
+                        {entry.nickname.charAt(0).toUpperCase()}
+                      {/if}
+                    </div>
+                    <button
+                      class="min-w-0 flex-1 text-left"
+                      onclick={() => {
+                        phonebookOpen = false;
+                        const contactId = entry.did || entry.peerId;
+                        handleSelectDm(contactId);
+                      }}
+                    >
+                      <div class="truncate text-sm font-medium">
+                        {entry.nickname}
+                      </div>
+                      <div class="truncate text-xs text-muted-foreground">
+                        {entry.peerId.slice(0, 16)}
+                      </div>
+                    </button>
+                    <button
+                      class="size-8 inline-flex items-center justify-center rounded hover:bg-accent cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                      onclick={() => toggleFavorite(entry.peerId)}
+                      title="Add to favorites"
+                    >
+                      <Star class="size-4 text-gray-400" />
+                    </button>
+                    <button
+                      class="size-8 inline-flex items-center justify-center rounded hover:bg-accent cursor-pointer"
+                      onclick={() => removePhonebookContact(entry.peerId)}
+                    >
+                      <Trash2 class="size-4 text-destructive" />
+                    </button>
+                  </div>
+                {/each}
+              {/if}
+            {/if}
+          </div>
+          <Dialog.Close
+            class="absolute right-4 top-4 rounded-sm opacity-70 hover:opacity-100 cursor-pointer"
+          >
+            <X class="size-4" />
+          </Dialog.Close>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   {/if}
 </QueryClientProvider>

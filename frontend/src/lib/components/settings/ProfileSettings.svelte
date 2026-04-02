@@ -2,7 +2,7 @@
   import { Input } from "$lib/components/ui/input";
   import { Button } from "$lib/components/ui/button";
   import { profileStore, saveName } from "$lib/profile.svelte";
-  import { lock } from "$lib/identity.svelte";
+  import { lock } from "$lib/identity/identity.svelte";
   import { Pencil, LogOut } from "@lucide/svelte";
 
   interface Props {

@@ -12,7 +12,7 @@
 
 import { ed25519, x25519 } from "@noble/curves/ed25519.js";
 import { hex, unhex, utf8 } from "./utils";
-import { didToPublicKey, requireSession } from "./identity";
+import { didToPublicKey, requireSession } from "./identity/identity";
 import type { Message } from "./types/message";
 
 /**

@@ -11,18 +11,18 @@
     PhoneOff,
     Settings,
   } from "@lucide/svelte";
+  import { transportState } from "$lib/transport/transport.svelte";
   import {
-    transportState,
     toggleMute,
-    toggleDeafen,
     toggleCamera,
     startScreenShare,
     stopScreenShare,
     leaveCall,
-  } from "$lib/transport.svelte";
+  } from "$lib/transport/call.svelte";
   import { profileStore, loadProfile } from "$lib/profile.svelte";
   import AvatarPickerDialog from "$lib/components/AvatarPickerDialog.svelte";
   import SettingsDialog from "$lib/components/SettingsDialog.svelte";
+  import { toggleDeafen } from "$lib/transport/call.svelte";
 
   let avatarDialogOpen = $state(false);
   let audioSettingsOpen = $state(false);

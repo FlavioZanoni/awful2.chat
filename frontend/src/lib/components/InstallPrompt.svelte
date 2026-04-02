@@ -5,15 +5,15 @@
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
 
-
   let open = $state(false);
   let deferredPrompt = $state<BeforeInstallPromptEvent | null>(null);
   let isStandalone = $state(false);
 
   onMount(() => {
     // Check if already installed
-    isStandalone = window.matchMedia("(display-mode: standalone)").matches || 
-                   (window.navigator as any).standalone === true;
+    isStandalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as any).standalone === true;
 
     if (isStandalone) return;
 
@@ -24,10 +24,10 @@
       // Let's show it automatically for now, but maybe with a cooldown
       setTimeout(() => {
         if (deferredPrompt && !isStandalone) {
-           // Only show if NOT on the root landing page (/)
-           if (window.location.pathname !== "/") {
-             open = true;
-           }
+          // Only show if NOT on the root landing page (/)
+          if (window.location.pathname !== "/") {
+            open = true;
+          }
         }
       }, 3000); // Show 3 seconds after load
     };
@@ -73,7 +73,8 @@
           <Dialog.Title>Install Awful.chat</Dialog.Title>
         </div>
         <Dialog.Description>
-          Add Awful.chat to your home screen for quick access and a better experience!
+          Add Awful.chat to your home screen for quick access and a better
+          experience!
         </Dialog.Description>
       </Dialog.Header>
       <div class="flex flex-col gap-2 mt-4">

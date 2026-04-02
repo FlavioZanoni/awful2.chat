@@ -43,13 +43,31 @@ export function setCookie(name: string, value: string, maxAge: number): void {
 }
 
 export function getCookie(name: string): string | null {
-  const match = document.cookie.match(
-    new RegExp("(^| )" + name + "=([^;]+)")
-  );
+  const match = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
   if (match) return decodeURIComponent(match[2]);
   return null;
 }
 
 export function deleteCookie(name: string): void {
   document.cookie = `${name}=; max-age=0; path=/; SameSite=Strict`;
+}
+
+export function encode(obj: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(obj));
+}
+
+export function decode(data: Uint8Array): unknown {
+  return JSON.parse(new TextDecoder().decode(data));
+}
+
+export function normalizeAvatarUrl(url: unknown): string | undefined {
+  if (typeof url !== "string") return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
+      return undefined;
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
 }

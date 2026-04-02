@@ -229,7 +229,10 @@ export class LibP2PTransport implements PeerTransport {
     if (!this.openingStreams.has(peerId)) {
       this.openingStreams.add(peerId);
       this.openOutboundStream(peerId).catch((err) => {
-        console.warn(`[LibP2PTransport] stream open failed for ${peerId}:`, err);
+        console.warn(
+          `[LibP2PTransport] stream open failed for ${peerId}:`,
+          err
+        );
         this.openingStreams.delete(peerId);
         this.pendingQueues.delete(peerId);
       });
@@ -245,12 +248,18 @@ export class LibP2PTransport implements PeerTransport {
     }
   }
 
-  on<K extends keyof TransportEvents>(event: K, handler: TransportEvents[K]): void {
+  on<K extends keyof TransportEvents>(
+    event: K,
+    handler: TransportEvents[K]
+  ): void {
     if (!this.handlers.has(event)) this.handlers.set(event, new Set());
     this.handlers.get(event)!.add(handler);
   }
 
-  off<K extends keyof TransportEvents>(event: K, handler: TransportEvents[K]): void {
+  off<K extends keyof TransportEvents>(
+    event: K,
+    handler: TransportEvents[K]
+  ): void {
     this.handlers.get(event)?.delete(handler);
   }
 
@@ -295,7 +304,9 @@ export class LibP2PTransport implements PeerTransport {
     const relayMa = import.meta.env.VITE_RELAY_MULTIADDR as string;
     const circuitListenAddr = multiaddr(`${relayMa}/p2p-circuit`);
     try {
-      await (this.node as any).components.transportManager.listen([circuitListenAddr]);
+      await (this.node as any).components.transportManager.listen([
+        circuitListenAddr,
+      ]);
     } catch (err) {
       console.warn("[Transport] reservation request failed:", err);
     }
@@ -310,7 +321,8 @@ export class LibP2PTransport implements PeerTransport {
   }
 
   private scheduleRelayReconnect(): void {
-    if (this.intentionalDisconnect || this.relayReconnectTimer || !this.node) return;
+    if (this.intentionalDisconnect || this.relayReconnectTimer || !this.node)
+      return;
 
     this.relayReconnectTimer = setTimeout(async () => {
       this.relayReconnectTimer = null;
@@ -377,7 +389,10 @@ export class LibP2PTransport implements PeerTransport {
       buf = merged;
 
       while (buf.byteLength >= 4) {
-        const len = new DataView(buf.buffer, buf.byteOffset).getUint32(0, false);
+        const len = new DataView(buf.buffer, buf.byteOffset).getUint32(
+          0,
+          false
+        );
         if (buf.byteLength < 4 + len) break;
         const payload = buf.slice(4, 4 + len);
         buf = buf.slice(4 + len);
@@ -486,7 +501,9 @@ export class LibP2PTransport implements PeerTransport {
 
     try {
       const relayAddr = import.meta.env.VITE_RELAY_MULTIADDR as string;
-      const withWebRTC = multiaddr(`${relayAddr}/p2p-circuit/webrtc/p2p/${peerId}`);
+      const withWebRTC = multiaddr(
+        `${relayAddr}/p2p-circuit/webrtc/p2p/${peerId}`
+      );
       const withoutWebRTC = multiaddr(`${relayAddr}/p2p-circuit/p2p/${peerId}`);
 
       try {
@@ -499,7 +516,11 @@ export class LibP2PTransport implements PeerTransport {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (!message.includes("NO_RESERVATION")) {
-          console.warn("[Rendezvous] both dials failed for", peerId.slice(-8), err);
+          console.warn(
+            "[Rendezvous] both dials failed for",
+            peerId.slice(-8),
+            err
+          );
         }
       }
     } finally {
@@ -575,7 +596,10 @@ export class LibP2PTransport implements PeerTransport {
   }
 
   private async peerIdFromRawKey(privateKeyBytes: Uint8Array) {
-    const privKey = await keys.generateKeyPairFromSeed("Ed25519", privateKeyBytes);
+    const privKey = await keys.generateKeyPairFromSeed(
+      "Ed25519",
+      privateKeyBytes
+    );
     return peerIdFromPrivateKey(privKey);
   }
 
