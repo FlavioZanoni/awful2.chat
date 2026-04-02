@@ -138,6 +138,7 @@ export interface WireProfile {
 export interface WireCallPresence {
   type: MessageType.CallPresence;
   inCall: boolean;
+  roomCode?: string; // the room where they're calling
 }
 
 export interface WireCallState {

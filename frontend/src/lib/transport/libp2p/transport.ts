@@ -152,6 +152,7 @@ export class LibP2PTransport implements PeerTransport {
       if (this.isRelayPeer(id)) {
         if (!this.intentionalDisconnect) {
           console.warn("[Transport] relay disconnected, scheduling reconnect");
+          this.emit("status", { type: "relay-disconnected", message: "Relay disconnected - reconnecting..." });
           this.scheduleRelayReconnect();
         }
         return;
@@ -233,6 +234,11 @@ export class LibP2PTransport implements PeerTransport {
           `[LibP2PTransport] stream open failed for ${peerId}:`,
           err
         );
+        this.emit("status", { 
+          type: "stream-open-failed", 
+          peerId: peerId.slice(-8),
+          message: `Failed to open stream to peer ${peerId.slice(-8)}` 
+        });
         this.openingStreams.delete(peerId);
         this.pendingQueues.delete(peerId);
       });
@@ -293,8 +299,10 @@ export class LibP2PTransport implements PeerTransport {
     try {
       await this.node.dial(multiaddr(relayMa));
       console.log("[Transport] relay connected");
+      this.emit("status", { type: "relay-connected", message: "Connected to relay" });
     } catch (err) {
       console.error("[Transport] relay dial failed:", err);
+      this.emit("status", { type: "relay-dial-failed", message: "Failed to connect to relay" });
       throw err;
     }
   }
@@ -324,6 +332,8 @@ export class LibP2PTransport implements PeerTransport {
     if (this.intentionalDisconnect || this.relayReconnectTimer || !this.node)
       return;
 
+    this.emit("status", { type: "relay-reconnecting", message: "Reconnecting to relay..." });
+
     this.relayReconnectTimer = setTimeout(async () => {
       this.relayReconnectTimer = null;
       if (this.intentionalDisconnect || !this.node) return;
@@ -337,6 +347,7 @@ export class LibP2PTransport implements PeerTransport {
         this.startRendezvous();
       } catch (err) {
         console.warn("[Transport] relay reconnect failed, retrying:", err);
+        this.emit("status", { type: "relay-reconnect-failed", message: "Relay reconnect failed - retrying..." });
         this.scheduleRelayReconnect();
       }
     }, RELAY_RECONNECT_DELAY_MS);
@@ -430,6 +441,10 @@ export class LibP2PTransport implements PeerTransport {
       );
     } catch (err) {
       console.warn("[Rendezvous] failed to open stream, retrying:", err);
+      this.emit("status", { 
+        type: "rendezvous-failed", 
+        message: "Failed to connect to room server - retrying..." 
+      });
       setTimeout(() => this.startRendezvous(), RENDEZVOUS_RECONNECT_DELAY_MS);
       return;
     }
@@ -476,6 +491,10 @@ export class LibP2PTransport implements PeerTransport {
       this.rendezvousStream = null;
       if (!this.intentionalDisconnect && this.node) {
         console.warn("[Rendezvous] stream closed, reconnecting");
+        this.emit("status", { 
+          type: "rendezvous-reconnecting", 
+          message: "Room server disconnected - reconnecting..." 
+        });
         setTimeout(() => this.startRendezvous(), RENDEZVOUS_RECONNECT_DELAY_MS);
       }
     });

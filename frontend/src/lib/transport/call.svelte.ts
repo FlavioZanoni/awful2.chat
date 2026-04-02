@@ -34,6 +34,7 @@ export function _sendCallPresence(peerId?: string): void {
   const payload = encode({
     type: MessageType.CallPresence,
     inCall: transportState.inCall,
+    roomCode: transportState.inCall ? transportState.roomCode ?? undefined : undefined,
   });
   if (peerId) _transport.send(peerId, payload);
   else _transport.broadcast(payload, transportState.roomCode!);
@@ -45,6 +46,7 @@ export async function joinCall(): Promise<void> {
     await _voice.join(transportState.roomCode ?? "");
     await _video.join(transportState.roomCode ?? "", _transport.selfId());
     transportState.inCall = true;
+    transportState.callRoomCode = transportState.roomCode; // Track which room the call is in
     playJoinSound();
     _sendCallPresence();
     transportState.muted = _voice.isMuted();
@@ -54,6 +56,7 @@ export async function joinCall(): Promise<void> {
     _voice.leave();
     _video.leave();
     transportState.inCall = false;
+    transportState.callRoomCode = null;
     transportState.muted = false;
     transportState.localCameraStream = null;
     transportState.localScreenStream = null;
@@ -69,6 +72,7 @@ export function leaveCall(): void {
   if (transportState.inCall) {
     playLeaveSound();
     transportState.inCall = false;
+    transportState.callRoomCode = null;
     _sendCallPresence();
   }
   stopCamera();
@@ -76,6 +80,7 @@ export function leaveCall(): void {
   _voice.leave();
   _video.leave();
   transportState.inCall = false;
+  transportState.callRoomCode = null;
   transportState.muted = false;
   transportState.deafened = false;
   transportState.participants = new Map();

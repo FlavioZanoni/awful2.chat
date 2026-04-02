@@ -88,11 +88,22 @@
     peers,
     messages,
     inCall,
+    callRoomCode,
+    callPeerIds,
+    callPeerRooms,
     peerNames,
     peerAvatars,
     fileTransfers,
     connecting,
   } = $derived(transportState);
+
+  const peersInThisRoom = $derived(
+    [...callPeerIds].filter((peerId) => callPeerRooms.get(peerId) === roomCode)
+  );
+
+  const showCallView = $derived(
+    (inCall && callRoomCode === roomCode) || peersInThisRoom.length > 0
+  );
   let showUserList = $state(false);
 
   let draft = $state("");
@@ -893,7 +904,9 @@
     </div>
   </header>
 
-  <VoiceVideoCallView />
+  {#if showCallView}
+    <VoiceVideoCallView />
+  {/if}
 
   {#if connecting}
     <div

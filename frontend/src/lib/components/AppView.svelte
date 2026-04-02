@@ -6,6 +6,7 @@
   import RoomCreateJoin from "$lib/components/RoomCreateJoin.svelte";
   import ChatView from "$lib/components/ChatView.svelte";
   import RoomSidebar from "$lib/components/RoomSidebar.svelte";
+  import TransportStatus from "$lib/components/TransportStatus.svelte";
   import {
     transportState,
     joinRoom,
@@ -1001,4 +1002,6 @@
       </Dialog.Portal>
     </Dialog.Root>
   {/if}
+
+  <TransportStatus />
 </QueryClientProvider>

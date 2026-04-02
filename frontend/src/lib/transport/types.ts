@@ -2,7 +2,22 @@ export interface TransportEvents {
   connect: (peerId: string) => void;
   disconnect: (peerId: string) => void;
   message: (peerId: string, data: Uint8Array, room: string | null) => void;
+  status: (status: TransportStatus) => void;
 }
+
+export type TransportStatus =
+  | { type: "relay-connected"; message: string }
+  | { type: "relay-disconnected"; message: string }
+  | { type: "relay-dial-failed"; message: string }
+  | { type: "relay-reconnect-failed"; message: string }
+  | { type: "relay-reconnecting"; message: string }
+  | { type: "stream-open-failed"; peerId: string; message: string }
+  | { type: "rendezvous-failed"; message: string }
+  | { type: "rendezvous-reconnecting"; message: string }
+  | { type: "peer-dialing"; peerId: string; message: string }
+  | { type: "peer-connected"; peerId: string; message: string }
+  | { type: "peer-disconnected"; peerId: string; message: string }
+  | { type: "reservation-timeout"; message: string };
 
 export interface PeerTransport {
   connect(privateKeyBytes?: Uint8Array | null): Promise<void>;

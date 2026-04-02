@@ -9,6 +9,7 @@
     Users,
   } from "@lucide/svelte";
   import SidebarControls from "./SidebarControls.svelte";
+  import CallStatus from "./CallStatus.svelte";
 
   interface DmPreview {
     text: string;
@@ -343,6 +344,7 @@
     {/if}
   </div>
 
+  <CallStatus />
   <SidebarControls />
 </aside>
 

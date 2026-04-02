@@ -114,6 +114,7 @@ interface TransportState {
   peerAvatars: Map<string, string>;
   error: string | null;
   callPeerIds: Set<string>;
+  callPeerRooms: Map<string, string>; // peerId -> roomCode they're calling in
   sfuPeerIds: Set<string>;
   pendingTransmissions: Map<string, string>;
   watchingTransmissionPeerId: string | null;
@@ -124,6 +125,7 @@ interface TransportState {
   chatMode: "room" | "dm";
   activeDmPeerId: string | null;
   dmVersion: number;
+  callRoomCode: string | null;
 }
 
 export const transportState = $state<TransportState>({
@@ -148,6 +150,7 @@ export const transportState = $state<TransportState>({
   peerAvatars: new Map(),
   error: null,
   callPeerIds: new Set(),
+  callPeerRooms: new Map(),
   sfuPeerIds: new Set(),
   pendingTransmissions: new Map(),
   watchingTransmissionPeerId: null,
@@ -158,6 +161,7 @@ export const transportState = $state<TransportState>({
   chatMode: "room",
   activeDmPeerId: null,
   dmVersion: 0,
+  callRoomCode: null,
 });
 
 let _lamport = 0;
@@ -423,13 +427,16 @@ function _handleProfile(peerId: string, msg: WireProfile): void {
     .catch(() => {});
 }
 
-function _handleCallPresence(peerId: string, inCall: boolean): void {
+function _handleCallPresence(peerId: string, inCall: boolean, roomCode?: string): void {
   const next = new Set(transportState.callPeerIds);
+  const roomNext = new Map(transportState.callPeerRooms);
 
-  if (inCall) {
+  if (inCall && roomCode) {
     next.add(peerId);
+    roomNext.set(peerId, roomCode);
   } else {
     next.delete(peerId);
+    roomNext.delete(peerId);
 
     const parts = new Map(transportState.participants);
     parts.delete(peerId);
@@ -454,6 +461,7 @@ function _handleCallPresence(peerId: string, inCall: boolean): void {
   }
 
   transportState.callPeerIds = next;
+  transportState.callPeerRooms = roomNext;
 }
 
 function _handleCallState(peerId: string, msg: WireCallState): void {
@@ -759,7 +767,7 @@ _transport.on("message", (peerId, data, room) => {
         _handleProfile(peerId, msg);
         break;
       case MessageType.CallPresence:
-        _handleCallPresence(peerId, msg.inCall);
+        _handleCallPresence(peerId, msg.inCall, msg.roomCode);
         break;
       case MessageType.CallState:
         _handleCallState(peerId, msg);
