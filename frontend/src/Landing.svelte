@@ -27,23 +27,23 @@
   ];
 
   const serverVisibility = [
-    { canSee: true, label: "WebSocket connection" },
-    { canSee: true, label: "Your ephemeral assigned ID" },
     { canSee: true, label: "Room code" },
+    { canSee: true, label: "Video*" },
+    { canSee: true, label: "Connection details" },
     { canSee: false, label: "Message content" },
     { canSee: false, label: "Files & media" },
-    { canSee: false, label: "Voice & video" },
+    { canSee: false, label: "Voice" },
   ];
 
   const stackItems = [
-    {
-      category: "ENCRYPTION",
-      title: "AES-GCM",
-      subtitle: "",
-      description:
-        "256-bit encryption at rest. Your messages are encrypted before they leave your device.",
-      classes: "bento-item-lg",
-    },
+  {
+    category: "ENCRYPTION",
+    title: "Noise Protocol",
+    subtitle: "+ Ed25519",
+    description:
+      "End-to-end encrypted connections with Noise protocol. Every message is cryptographically signed with your identity key.",
+    classes: "bento-item-lg",
+  },
     {
       category: "IDENTITY",
       title: "BIP39",
@@ -182,7 +182,7 @@
         <p class="hero-desc">
           End-to-end encrypted. Peer-to-peer. Self-hosted.
           <span class="text-fg">The server is just a dumb signaling pipe.</span>
-          It literally cannot read your messages.
+          It cannot read your messages.
         </p>
         <div class="hero-buttons">
           <a href="/app" class="btn btn-primary">
@@ -202,7 +202,7 @@
             >
           </a>
           <a
-            href="https://github.com"
+            href="https://github.com/awful-org/awful.chat"
             class="btn btn-outline"
             target="_blank"
             rel="noopener"
@@ -302,8 +302,15 @@
           </h2>
           <p class="section-desc">
             Messages travel directly between devices via WebRTC. The server only
-            helps you find each other—it never sees your conversations. Built on
-            mediasoup for voice/video at scale.
+            helps you find each other - it never sees your conversations. Built
+            on mediasoup for video at scale
+          </p>
+          <p class="section-desc">
+            *The server has access to the videos and streams, this is needed to
+            have a better user experience and allow more people to watch streams
+            together. An option to have end-to-end encryption for video is <i
+              >coming soon</i
+            >
           </p>
         </div>
         <div class="visibility-list">
@@ -407,7 +414,7 @@
               <div class="terminal-line">
                 <span class="terminal-prompt">$</span>
                 <span class="terminal-cmd"
-                  >git clone https://github.com/FlavioZanoni/awful.chat</span
+                  >git clone git@github.com:awful-org/awful.chat.git</span
                 >
               </div>
               <div class="terminal-line">

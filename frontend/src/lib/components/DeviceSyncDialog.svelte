@@ -1,10 +1,11 @@
 <script lang="ts">
-  import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-  } from "$lib/components/ui/dialog";
+import { tick } from "svelte";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "$lib/components/ui/dialog";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import {
@@ -15,7 +16,7 @@
     startScanning,
     cancelSync,
     type SyncPayload,
-  } from "$lib/sync.svelte";
+  } from "$lib/transport/sync.svelte";
   import {
     Copy,
     Camera,
@@ -104,10 +105,11 @@
     }
   }
 
-  async function handleStartScanning() {
-    view = "scan";
-    try {
-      await startScanning(
+async function handleStartScanning() {
+  view = "scan";
+  await tick();
+  try {
+    await startScanning(
         scannerElementId,
         async (payload) => {
           await handleScanSuccess(payload);

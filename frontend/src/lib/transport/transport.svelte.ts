@@ -46,6 +46,7 @@ import { LibP2PTransport } from "./libp2p/transport";
 import { LibP2PVoice } from "./libp2p/voice";
 import { DtlnProcessor } from "../audio/dtln-processor";
 import { requireSession } from "../identity/identity";
+import { signMessage } from "../messaging";
 import { encode, decode, normalizeAvatarUrl } from "../utils";
 import { _sendCallPresence, _sendCallState, leaveCall } from "./call.svelte";
 import {
@@ -940,7 +941,7 @@ export async function sendMessage(
   const myId = identityStore.did ?? _transport.selfId();
   const lamport = lamportSend();
 
-  const msg: Message = {
+  let msg: Message = {
     id: crypto.randomUUID(),
     roomCode: transportState.roomCode,
     senderId: myId,
@@ -956,6 +957,9 @@ export async function sendMessage(
     reactionEmoji: options.reactionEmoji,
     reactionOp: options.reactionOp,
   };
+
+  // Sign the message before sending
+  msg = signMessage(msg);
 
   _transport.broadcast(encode(messageToWire(msg)), transportState.roomCode);
 

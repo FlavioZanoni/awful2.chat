@@ -14,6 +14,7 @@ import {
   type DMRoom,
 } from "$lib/storage";
 import { MessageType, type Message } from "$lib/types/message";
+import { signMessage } from "$lib/messaging";
 import {
   _loadHistory,
   _peerIdToDid,
@@ -210,7 +211,7 @@ export async function sendDirectMessage(text: string): Promise<void> {
   }
 
   const mySenderId = identityStore.did ?? _transport.selfId();
-  const msg: Message = {
+  let msg: Message = {
     id,
     roomCode,
     senderId: mySenderId,
@@ -222,6 +223,9 @@ export async function sendDirectMessage(text: string): Promise<void> {
     attachments: [],
     status: "sent",
   };
+
+  // Sign the message before storing
+  msg = signMessage(msg);
 
   await putMessage(msg);
   await refreshDmRooms();

@@ -7,8 +7,8 @@
 
 import QRCode from "qrcode";
 import { Html5Qrcode } from "html5-qrcode";
-import type { PeerTransport } from "./transport/types";
-import { SimplePeerTransport } from "./transport/simplepeer/transport";
+import type { PeerTransport } from "./types";
+import { LibP2PTransport } from "./libp2p/transport";
 import {
   getDB,
   wipeLocalDatabase,
@@ -19,8 +19,8 @@ import {
   putPeerProfile,
   putOwnProfile,
   putSavedGif,
-} from "./storage";
-import type { Message, Attachment, PendingMessage } from "./types/message";
+} from "../storage";
+import type { Message, Attachment, PendingMessage } from "../types/message";
 import type {
   Room,
   DMRoom,
@@ -28,7 +28,7 @@ import type {
   OwnProfile,
   SavedGif,
   WatermarkRecord,
-} from "./storage";
+} from "../storage";
 
 export interface SyncPayload {
   roomCode: string;
@@ -280,7 +280,7 @@ async function startSyncServer(): Promise<void> {
 
   console.log("[Sync][Source] Starting sync server for room:", _syncRoomCode);
 
-  _transport = new SimplePeerTransport();
+  _transport = new LibP2PTransport();
 
   // Set up handlers
   _transport.on("connect", (peerId: string) => {
@@ -330,7 +330,8 @@ async function startSyncServer(): Promise<void> {
 
   syncState.isConnecting = true;
   console.log("[Sync][Source] Connecting to room...");
-  await (_transport as SimplePeerTransport).connect(_syncRoomCode);
+  await _transport.connect();
+  _transport.joinRoom(_syncRoomCode);
   console.log("[Sync][Source] Connected to room");
 }
 
@@ -446,7 +447,7 @@ export async function connectAsTarget(payload: SyncPayload): Promise<void> {
     _syncRoomCode = payload.roomCode;
     _isSourceDevice = false;
 
-    _transport = new SimplePeerTransport();
+    _transport = new LibP2PTransport();
 
     let receivedIdentity: DatabaseExport["identity"] | null = null;
     const receivedData: Partial<DatabaseExport> = {};
@@ -545,7 +546,8 @@ export async function connectAsTarget(payload: SyncPayload): Promise<void> {
                 {
                   identity: receivedIdentity || undefined,
                   messages: (receivedData.messages || []) as Message[],
-                  attachments: (receivedData.attachments || []) as AttachmentExport[],
+                  attachments: (receivedData.attachments ||
+                    []) as AttachmentExport[],
                   pending: (receivedData.pending || []) as PendingMessage[],
                   watermarks: (receivedData.watermarks ||
                     []) as WatermarkRecord[],
@@ -602,7 +604,8 @@ export async function connectAsTarget(payload: SyncPayload): Promise<void> {
       }
     });
 
-    await (_transport as SimplePeerTransport).connect(payload.roomCode);
+    await _transport.connect();
+    _transport.joinRoom(payload.roomCode);
   } catch (err) {
     syncState.isConnecting = false;
     syncState.syncError = err instanceof Error ? err.message : String(err);

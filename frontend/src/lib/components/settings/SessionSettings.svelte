@@ -1,27 +1,31 @@
 <script lang="ts">
-  import { Label } from "$lib/components/ui/label";
-  import { Input } from "$lib/components/ui/input";
-  import { Button } from "$lib/components/ui/button";
-  import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-  } from "$lib/components/ui/select";
-  import { Switch } from "$lib/components/ui/switch";
-  import { QrCode, Camera } from "@lucide/svelte";
-  import {
-    enroll,
-    identityStore,
-    removeWebAuthn,
-  } from "$lib/identity/identity.svelte";
+import { Label } from "$lib/components/ui/label";
+import { Input } from "$lib/components/ui/input";
+import { Button } from "$lib/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "$lib/components/ui/select";
+import { Switch } from "$lib/components/ui/switch";
+import { QrCode, Camera } from "@lucide/svelte";
+import {
+  enroll,
+  identityStore,
+  removeWebAuthn,
+} from "$lib/identity/identity.svelte";
+import DeviceSyncDialog from "$lib/components/DeviceSyncDialog.svelte";
 
-  interface Props {
-    isMobile?: boolean;
-    onClose?: () => void;
-  }
+interface Props {
+  isMobile?: boolean;
+  onClose?: () => void;
+}
 
-  let { isMobile = false, onClose }: Props = $props();
+let { isMobile = false, onClose }: Props = $props();
+
+let syncDialogOpen = $state(false);
+let syncFlowMode = $state<"receive" | "generate-qr" | "scan-qr">("receive");
 
   let rememberDuration = $state(
     parseInt(localStorage.getItem("awful_remember_duration") ?? "15", 10)
@@ -184,38 +188,50 @@
     </div>
   {/if}
 
-  <!-- Sync Section -->
-  <div
-    class="flex flex-col gap-4 p-4 bg-muted/30 rounded-lg border border-border/50"
-  >
-    <div class="flex items-center gap-2">
-      <div class="w-1 h-4 bg-cyan-500 rounded-full"></div>
-      <Label
-        class="text-xs font-mono text-muted-foreground uppercase tracking-wider"
-        >Sync</Label
-      >
-    </div>
-    <div class="grid grid-cols-2 gap-2">
-      <Button
-        variant="outline"
-        class="font-mono flex-col h-auto py-3 gap-2"
-        onclick={() => {
-          if (isMobile) onClose?.();
-        }}
-      >
-        <QrCode class="w-5 h-5" />
-        <span class="text-xs">Generate QR</span>
-      </Button>
-      <Button
-        variant="outline"
-        class="font-mono flex-col h-auto py-3 gap-2"
-        onclick={() => {
-          if (isMobile) onClose?.();
-        }}
-      >
-        <Camera class="w-5 h-5" />
-        <span class="text-xs">Scan QR</span>
-      </Button>
-    </div>
+<!-- Sync Section -->
+<div
+  class="flex flex-col gap-4 p-4 bg-muted/30 rounded-lg border border-border/50"
+>
+  <div class="flex items-center gap-2">
+    <div class="w-1 h-4 bg-cyan-500 rounded-full"></div>
+    <Label
+      class="text-xs font-mono text-muted-foreground uppercase tracking-wider"
+      >Sync</Label
+    >
   </div>
+  <div class="grid grid-cols-2 gap-2">
+    <Button
+      variant="outline"
+      class="font-mono flex-col h-auto py-3 gap-2"
+      onclick={() => {
+        syncFlowMode = "generate-qr";
+        syncDialogOpen = true;
+        if (isMobile) onClose?.();
+      }}
+    >
+      <QrCode class="w-5 h-5" />
+      <span class="text-xs">Generate QR</span>
+    </Button>
+    <Button
+      variant="outline"
+      class="font-mono flex-col h-auto py-3 gap-2"
+      onclick={() => {
+        syncFlowMode = "scan-qr";
+        syncDialogOpen = true;
+        if (isMobile) onClose?.();
+      }}
+    >
+      <Camera class="w-5 h-5" />
+      <span class="text-xs">Scan QR</span>
+    </Button>
+  </div>
+</div>
+
+<DeviceSyncDialog
+  bind:open={syncDialogOpen}
+  flowMode={syncFlowMode}
+  onClose={() => {
+    syncDialogOpen = false;
+  }}
+/>
 </div>
